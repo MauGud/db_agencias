@@ -17,8 +17,12 @@ async function readStore(): Promise<StoreSnapshot> {
 }
 
 async function persist(snapshot: StoreSnapshot) {
-  await mkdir(path.dirname(FILE), { recursive: true });
-  await writeFile(FILE, JSON.stringify(snapshot, null, 2), "utf8");
+  try {
+    await mkdir(path.dirname(FILE), { recursive: true });
+    await writeFile(FILE, JSON.stringify(snapshot, null, 2), "utf8");
+  } catch {
+    // En Vercel el filesystem es de solo lectura fuera de /tmp.
+  }
 }
 
 export async function localList(): Promise<StoreSnapshot> {

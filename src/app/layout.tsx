@@ -21,6 +21,8 @@ export const metadata: Metadata = {
   description: "Base de grupos automotrices y agencias para cruzar facturas en inspección documental.",
 };
 
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html

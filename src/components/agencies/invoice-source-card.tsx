@@ -20,7 +20,7 @@ import { parseInvoiceStorageUrl } from "@/lib/pass/invoice-url";
 import { QUALITY_REASONS, type QualityReason, type SourceInvoice } from "@/lib/pass/types";
 import { cn } from "@/lib/utils";
 
-export type SourceDraft = Omit<SourceInvoice, "id" | "agencyId" | "createdAt">;
+export type SourceDraft = Omit<SourceInvoice, "id" | "agencyId" | "createdAt"> & { id?: string };
 
 export function blankSource(): SourceDraft {
   return {

@@ -11,17 +11,24 @@ async function readStore(): Promise<StoreSnapshot> {
     return JSON.parse(raw) as StoreSnapshot;
   } catch {
     const snapshot: StoreSnapshot = { groups: seedGroups, agencies: seedAgencies };
-    await persist(snapshot);
+    await persist(snapshot, false);
     return snapshot;
   }
 }
 
-async function persist(snapshot: StoreSnapshot) {
+async function persist(snapshot: StoreSnapshot, required = true) {
   try {
     await mkdir(path.dirname(FILE), { recursive: true });
     await writeFile(FILE, JSON.stringify(snapshot, null, 2), "utf8");
-  } catch {
-    // En Vercel el filesystem es de solo lectura fuera de /tmp.
+  } catch (error) {
+    if (!required) return;
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (code === "EROFS" || code === "EPERM" || code === "EACCES") {
+      throw new Error(
+        "No pudimos escribir el store local. En Vercel el disco es de solo lectura: configura las keys de Pass para guardar fichas.",
+      );
+    }
+    throw error instanceof Error ? error : new Error("No pudimos guardar el store local.");
   }
 }
 

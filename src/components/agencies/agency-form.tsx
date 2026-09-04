@@ -57,28 +57,33 @@ function fromAgency(agency: Agency): FormState {
     postalCode: agency.postalCode,
     location: agency.location,
     notes: agency.notes,
-    sources: agency.sources.map(({ id: _id, agencyId: _a, createdAt: _c, ...rest }) => rest),
+    sources:
+      agency.sources.length > 0
+        ? agency.sources.map(({ agencyId: _a, createdAt: _c, ...rest }) => rest)
+        : [blankSource()],
   };
 }
 
-const EMPTY: FormState = {
-  name: "",
-  groupId: "",
-  brand: "",
-  legalName: "",
-  rfc: "",
-  emitterNumber: "",
-  email: "",
-  phone: "",
-  address: "",
-  city: "",
-  municipality: "",
-  state: "",
-  postalCode: "",
-  location: "",
-  notes: "",
-  sources: [blankSource()],
-};
+function emptyForm(groupId = ""): FormState {
+  return {
+    name: "",
+    groupId,
+    brand: "",
+    legalName: "",
+    rfc: "",
+    emitterNumber: "",
+    email: "",
+    phone: "",
+    address: "",
+    city: "",
+    municipality: "",
+    state: "",
+    postalCode: "",
+    location: "",
+    notes: "",
+    sources: [blankSource()],
+  };
+}
 
 export function AgencyForm({
   agency,
@@ -92,11 +97,12 @@ export function AgencyForm({
   const router = useRouter();
   const [groups, setGroups] = React.useState(initialGroups);
   const [form, setForm] = React.useState<FormState>(
-    agency ? fromAgency(agency) : { ...EMPTY, groupId: defaultGroupId ?? "" },
+    agency ? fromAgency(agency) : emptyForm(defaultGroupId ?? ""),
   );
   const [newGroup, setNewGroup] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [rfcHits, setRfcHits] = React.useState<{ id: string; name: string }[]>([]);
+  const submitRef = React.useRef<() => Promise<void>>(async () => {});
 
   const previewAgency = {
     ...form,
@@ -116,13 +122,12 @@ export function AgencyForm({
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        void submit();
+        void submitRef.current();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form]);
+  }, []);
 
   React.useEffect(() => {
     const rfc = form.rfc.replace(/[\s-]/g, "");
@@ -142,23 +147,25 @@ export function AgencyForm({
     setForm((f) => ({ ...f, ...partial }));
   }
 
-  async function createGroup() {
-    const name = newGroup.trim();
-    if (!name) return;
+  async function createGroup(nameOverride?: string) {
+    const name = (nameOverride ?? newGroup).trim();
+    if (!name) return null;
     const res = await fetch("/api/groups", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       body: JSON.stringify({ name, brands: form.brand ? [form.brand] : [] }),
     });
     const data = (await res.json()) as { group?: AutomotiveGroup; error?: string };
     if (!res.ok || !data.group) {
       toast(data.error ?? "No pudimos crear el grupo. Intenta de nuevo.");
-      return;
+      return null;
     }
     setGroups((g) => [...g, data.group!].sort((a, b) => a.name.localeCompare(b.name, "es")));
     patch({ groupId: data.group.id });
     setNewGroup("");
     toast(`Grupo ${data.group.name} creado.`);
+    return data.group;
   }
 
   async function submit() {
@@ -168,10 +175,21 @@ export function AgencyForm({
     }
     setSaving(true);
     try {
+      let groupId = form.groupId;
+      if (!groupId && newGroup.trim()) {
+        const created = await createGroup();
+        if (!created) return;
+        groupId = created.id;
+      }
+      if (!groupId) {
+        toast("Elige o crea un grupo automotriz. Cada ficha pertenece a un grupo.");
+        return;
+      }
       const res = await fetch(agency ? `/api/agencies/${agency.id}` : "/api/agencies", {
         method: agency ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        cache: "no-store",
+        body: JSON.stringify({ ...form, groupId }),
       });
       const data = (await res.json()) as { agency?: Agency; error?: string };
       if (!res.ok || !data.agency) {
@@ -179,17 +197,23 @@ export function AgencyForm({
         return;
       }
       toast("Ficha guardada.");
-      router.push("/agencias");
-      router.refresh();
+      if (agency) {
+        router.refresh();
+      } else {
+        router.push(`/agencias/${data.agency.id}`);
+        router.refresh();
+      }
     } catch {
       toast("Algo falló de nuestro lado. Intenta de nuevo.");
     } finally {
       setSaving(false);
     }
   }
+  submitRef.current = submit;
 
   return (
     <form
+      noValidate
       className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_280px]"
       onSubmit={(e) => {
         e.preventDefault();
@@ -235,7 +259,12 @@ export function AgencyForm({
                 onChange={(e) => patch({ brand: e.target.value })}
               />
             </Field>
-            <Field id="group" label="Grupo automotriz" className="sm:col-span-2">
+            <Field
+              id="group"
+              label="Grupo automotriz"
+              className="sm:col-span-2"
+              hint="Obligatorio. Si escribes un nombre nuevo y guardas, se crea el grupo al vuelo."
+            >
               <Select value={form.groupId || "none"} onValueChange={(v) => patch({ groupId: v === "none" ? "" : v })}>
                 <SelectTrigger id="group">
                   <SelectValue placeholder="Elige un grupo" />

@@ -100,7 +100,7 @@ export type Agency = {
 
 export type AgencyInput = Omit<Agency, "id" | "createdAt" | "updatedAt" | "status" | "sources"> & {
   id?: string;
-  sources: Omit<SourceInvoice, "id" | "agencyId" | "createdAt">[];
+  sources: Array<Omit<SourceInvoice, "id" | "agencyId" | "createdAt"> & { id?: string }>;
 };
 
 export type StoreSnapshot = {

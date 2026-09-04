@@ -1,67 +1,101 @@
+import { revalidatePath } from "next/cache";
+import { connection } from "next/server";
 import { agenciesBackend, passConfig } from "./config";
 import { deriveStatus } from "./completeness";
 import { localDeleteAgency, localList, localSaveAgency, localSaveGroup } from "./local-store";
 import { getAgenciesClient } from "./supabase";
 import type { Agency, AgencyInput, AutomotiveGroup, SourceInvoice, StoreSnapshot } from "./types";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function nowIso() {
   return new Date().toISOString();
 }
 
+function text(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function asUuid(value: string | null | undefined): string | null {
+  const v = text(value);
+  return v && UUID_RE.test(v) ? v : null;
+}
+
+function isBlankSource(partial: AgencyInput["sources"][number]) {
+  return !(
+    text(partial.fileUrl) ||
+    asUuid(partial.invoiceId) ||
+    text(partial.uuid) ||
+    text(partial.label) ||
+    text(partial.internalFolio) ||
+    text(partial.invoiceDate) ||
+    text(partial.rfcReceptor) ||
+    partial.total != null ||
+    text(partial.dictamen) ||
+    text(partial.qualityNotes) ||
+    (partial.qualityReasons?.length ?? 0) > 0
+  );
+}
+
+function bustCatalogCache(agencyId?: string) {
+  revalidatePath("/agencias");
+  revalidatePath("/grupos");
+  revalidatePath("/", "layout");
+  if (agencyId) revalidatePath(`/agencias/${agencyId}`);
+}
+
 function emptySource(agencyId: string, partial: AgencyInput["sources"][number]): SourceInvoice {
   return {
-    id: crypto.randomUUID(),
+    id: asUuid(partial.id) ?? crypto.randomUUID(),
     agencyId,
-    invoiceId: partial.invoiceId ?? null,
-    fileUrl: partial.fileUrl ?? "",
-    vehicleId: partial.vehicleId ?? null,
-    fileId: partial.fileId ?? null,
-    label: partial.label ?? "",
+    invoiceId: asUuid(partial.invoiceId),
+    fileUrl: text(partial.fileUrl),
+    vehicleId: asUuid(partial.vehicleId),
+    fileId: asUuid(partial.fileId),
+    label: text(partial.label),
     documentType: partial.documentType ?? "",
-    uuid: partial.uuid ?? "",
-    internalFolio: partial.internalFolio ?? "",
-    invoiceDate: partial.invoiceDate ?? "",
-    rfcReceptor: partial.rfcReceptor ?? "",
+    uuid: text(partial.uuid),
+    internalFolio: text(partial.internalFolio),
+    invoiceDate: text(partial.invoiceDate),
+    rfcReceptor: text(partial.rfcReceptor),
     total: partial.total ?? null,
-    hasSignature: partial.hasSignature ?? "",
-    signatureType: partial.signatureType ?? "",
-    sealsVisible: partial.sealsVisible ?? "",
-    identifiedSeal: partial.identifiedSeal ?? "",
-    qrPresent: partial.qrPresent ?? "",
-    qrFunctional: partial.qrFunctional ?? "",
-    satVerification: partial.satVerification ?? "",
-    satResult: partial.satResult ?? "",
+    hasSignature: text(partial.hasSignature),
+    signatureType: text(partial.signatureType),
+    sealsVisible: text(partial.sealsVisible),
+    identifiedSeal: text(partial.identifiedSeal),
+    qrPresent: text(partial.qrPresent),
+    qrFunctional: text(partial.qrFunctional),
+    satVerification: text(partial.satVerification),
+    satResult: text(partial.satResult),
     documentQuality: partial.documentQuality ?? "",
-    dictamen: partial.dictamen ?? "",
+    dictamen: text(partial.dictamen),
     qualityReasons: partial.qualityReasons ?? [],
-    qualityNotes: partial.qualityNotes ?? "",
+    qualityNotes: text(partial.qualityNotes),
     createdAt: nowIso(),
   };
 }
 
 function assembleAgency(input: AgencyInput, existing?: Agency): Agency {
-  const id = input.id ?? existing?.id ?? crypto.randomUUID();
+  const id = text(input.id) || existing?.id || crypto.randomUUID();
   const createdAt = existing?.createdAt ?? nowIso();
-  const sources = (input.sources ?? []).map((s) =>
-    emptySource(id, s),
-  );
+  const sources = (input.sources ?? []).filter((s) => !isBlankSource(s)).map((s) => emptySource(id, s));
   const agency: Agency = {
     id,
-    groupId: input.groupId,
-    name: input.name.trim(),
-    brand: input.brand.trim(),
-    legalName: input.legalName.trim(),
-    rfc: input.rfc.replace(/[\s-]/g, "").toUpperCase(),
-    emitterNumber: input.emitterNumber.trim(),
-    email: input.email.trim(),
-    phone: input.phone.trim(),
-    address: input.address.trim(),
-    city: input.city.trim(),
-    municipality: input.municipality.trim(),
-    state: input.state.trim(),
-    postalCode: input.postalCode.trim(),
-    location: input.location.trim(),
-    notes: input.notes.trim(),
+    groupId: text(input.groupId),
+    name: text(input.name),
+    brand: text(input.brand),
+    legalName: text(input.legalName),
+    rfc: text(input.rfc).replace(/[\s-]/g, "").toUpperCase(),
+    emitterNumber: text(input.emitterNumber),
+    email: text(input.email),
+    phone: text(input.phone),
+    address: text(input.address),
+    city: text(input.city),
+    municipality: text(input.municipality),
+    state: text(input.state),
+    postalCode: text(input.postalCode),
+    location: text(input.location),
+    notes: text(input.notes),
     status: "draft",
     createdAt,
     updatedAt: nowIso(),
@@ -181,6 +215,7 @@ async function supabaseSnapshot(): Promise<StoreSnapshot> {
 }
 
 export async function listCatalog(): Promise<StoreSnapshot> {
+  await connection();
   if (agenciesBackend() === "local") return localList();
   return supabaseSnapshot();
 }
@@ -205,10 +240,18 @@ export async function saveGroup(input: { id?: string; name: string; brands?: str
     updatedAt: nowIso(),
   };
 
-  if (agenciesBackend() === "local") return localSaveGroup(group);
+  if (agenciesBackend() === "local") {
+    const saved = await localSaveGroup(group);
+    bustCatalogCache();
+    return saved;
+  }
 
   const client = getAgenciesClient();
-  if (!client) return localSaveGroup(group);
+  if (!client) {
+    const saved = await localSaveGroup(group);
+    bustCatalogCache();
+    return saved;
+  }
   const { error } = await client.from(passConfig.agencies.groupsTable).upsert({
     id: group.id,
     name: group.name,
@@ -217,6 +260,7 @@ export async function saveGroup(input: { id?: string; name: string; brands?: str
     updated_at: group.updatedAt,
   });
   if (error) throw new Error(error.message);
+  bustCatalogCache();
   return group;
 }
 
@@ -224,15 +268,32 @@ export async function saveAgency(input: AgencyInput) {
   const existing = input.id ? await getAgency(input.id) : undefined;
   const agency = assembleAgency(input, existing ?? undefined);
 
-  if (agenciesBackend() === "local") return localSaveAgency(agency);
+  if (!agency.name) {
+    throw new Error("El nombre de la agencia es el ancla de la ficha.");
+  }
+
+  if (agenciesBackend() === "local") {
+    const saved = await localSaveAgency(agency);
+    bustCatalogCache(agency.id);
+    return saved;
+  }
 
   const client = getAgenciesClient();
-  if (!client) return localSaveAgency(agency);
+  if (!client) {
+    const saved = await localSaveAgency(agency);
+    bustCatalogCache(agency.id);
+    return saved;
+  }
+
+  const groupId = asUuid(agency.groupId);
+  if (!groupId) {
+    throw new Error("La ficha necesita un grupo automotriz. Elígelo o créalo antes de guardar.");
+  }
 
   const { agenciesTable, sourceInvoicesTable } = passConfig.agencies;
   const { error } = await client.from(agenciesTable).upsert({
     id: agency.id,
-    group_id: agency.groupId,
+    group_id: groupId,
     name: agency.name,
     brand: agency.brand,
     legal_name: agency.legalName,
@@ -286,15 +347,25 @@ export async function saveAgency(input: AgencyInput) {
     if (srcError) throw new Error(srcError.message);
   }
 
-  return agency;
+  bustCatalogCache(agency.id);
+  return { ...agency, groupId };
 }
 
 export async function deleteAgency(id: string) {
-  if (agenciesBackend() === "local") return localDeleteAgency(id);
+  if (agenciesBackend() === "local") {
+    await localDeleteAgency(id);
+    bustCatalogCache(id);
+    return;
+  }
   const client = getAgenciesClient();
-  if (!client) return localDeleteAgency(id);
+  if (!client) {
+    await localDeleteAgency(id);
+    bustCatalogCache(id);
+    return;
+  }
   const { error } = await client.from(passConfig.agencies.agenciesTable).delete().eq("id", id);
   if (error) throw new Error(error.message);
+  bustCatalogCache(id);
 }
 
 export async function findByRfc(rfc: string, exceptId?: string) {

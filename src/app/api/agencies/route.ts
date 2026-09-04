@@ -3,6 +3,8 @@ import { agenciesBackend } from "@/lib/pass/config";
 import { findByRfc, listCatalog, saveAgency } from "@/lib/pass/repo";
 import type { AgencyInput } from "@/lib/pass/types";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const rfc = request.nextUrl.searchParams.get("rfc");

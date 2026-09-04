@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { listGroups, saveGroup } from "@/lib/pass/repo";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const groups = await listGroups();

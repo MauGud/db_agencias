@@ -31,6 +31,9 @@ export default async function GruposPage() {
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
           {groups.map((group) => {
             const owned = agencies.filter((a) => a.groupId === group.id);
+            const former = agencies.filter(
+              (a) => a.groupId !== group.id && a.groupHistory.some((h) => h.groupId === group.id),
+            );
             return (
               <Card key={group.id}>
                 <CardHeader>
@@ -53,6 +56,26 @@ export default async function GruposPage() {
                       </li>
                     ))}
                   </ul>
+                  {former.length ? (
+                    <div className="mt-1 rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="text-xs font-medium text-muted-foreground">Historial · ya no venden con este grupo</p>
+                      <ul className="mt-1 flex flex-col gap-1">
+                        {former.map((a) => {
+                          const entry = a.groupHistory.find((h) => h.groupId === group.id);
+                          return (
+                            <li key={a.id}>
+                              <Link href={`/agencias/${a.id}`} className="text-sm hover:text-primary">
+                                {a.name}
+                              </Link>
+                              {entry?.brand ? (
+                                <span className="text-xs text-muted-foreground"> · vendía {entry.brand}</span>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
                   <Button asChild variant="outline" size="sm" className="mt-2 w-fit">
                     <Link href={`/agencias/nueva?grupo=${group.id}`}>
                       <Plus weight="fill" />

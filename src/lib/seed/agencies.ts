@@ -48,7 +48,7 @@ export const seedGroups: AutomotiveGroup[] = [
   },
 ];
 
-const agenciesRaw: Agency[] = [
+const agenciesRaw: Array<Omit<Agency, "mapsUrl" | "mapsPlaceName" | "mapsLat" | "mapsLng" | "groupHistory">> = [
   {
     id: "agc-toluca",
     groupId: "grp-audi",
@@ -365,5 +365,10 @@ const agenciesRaw: Agency[] = [
 
 export const seedAgencies: Agency[] = agenciesRaw.map((agency) => ({
   ...agency,
+  mapsUrl: "",
+  mapsPlaceName: "",
+  mapsLat: null,
+  mapsLng: null,
+  groupHistory: [],
   status: deriveStatus(agency),
 }));

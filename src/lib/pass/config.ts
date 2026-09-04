@@ -51,6 +51,7 @@ export const passConfig = {
     groupsTable: read("AGENCIES_GROUPS_TABLE") || "automotive_groups",
     agenciesTable: read("AGENCIES_TABLE") || "agencies",
     sourceInvoicesTable: read("AGENCY_SOURCE_INVOICES_TABLE") || "agency_source_invoices",
+    groupHistoryTable: read("AGENCY_GROUP_HISTORY_TABLE") || "agency_group_history",
   },
 
   /**

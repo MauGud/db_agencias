@@ -3,12 +3,27 @@ import path from "node:path";
 import { seedAgencies, seedGroups } from "@/lib/seed/agencies";
 import type { Agency, AutomotiveGroup, StoreSnapshot } from "./types";
 
+function withAgencyDefaults(agency: Agency): Agency {
+  return {
+    ...agency,
+    mapsUrl: agency.mapsUrl ?? "",
+    mapsPlaceName: agency.mapsPlaceName ?? "",
+    mapsLat: agency.mapsLat ?? null,
+    mapsLng: agency.mapsLng ?? null,
+    groupHistory: agency.groupHistory ?? [],
+  };
+}
+
 const FILE = path.join(process.cwd(), "data", "store.json");
 
 async function readStore(): Promise<StoreSnapshot> {
   try {
     const raw = await readFile(FILE, "utf8");
-    return JSON.parse(raw) as StoreSnapshot;
+    const parsed = JSON.parse(raw) as StoreSnapshot;
+    return {
+      groups: parsed.groups ?? [],
+      agencies: (parsed.agencies ?? []).map(withAgencyDefaults),
+    };
   } catch {
     const snapshot: StoreSnapshot = { groups: seedGroups, agencies: seedAgencies };
     await persist(snapshot, false);

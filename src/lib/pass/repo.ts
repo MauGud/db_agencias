@@ -1,10 +1,11 @@
+import { composedLocation } from "@/lib/mexico-address";
 import { revalidatePath } from "next/cache";
 import { connection } from "next/server";
 import { agenciesBackend, passConfig } from "./config";
 import { deriveStatus } from "./completeness";
 import { localDeleteAgency, localList, localSaveAgency, localSaveGroup } from "./local-store";
 import { getAgenciesClient } from "./supabase";
-import type { Agency, AgencyInput, AutomotiveGroup, SourceInvoice, StoreSnapshot } from "./types";
+import type { Agency, AgencyGroupHistory, AgencyInput, AutomotiveGroup, SourceInvoice, StoreSnapshot } from "./types";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -79,6 +80,17 @@ function assembleAgency(input: AgencyInput, existing?: Agency): Agency {
   const id = text(input.id) || existing?.id || crypto.randomUUID();
   const createdAt = existing?.createdAt ?? nowIso();
   const sources = (input.sources ?? []).filter((s) => !isBlankSource(s)).map((s) => emptySource(id, s));
+  const city = text(input.city);
+  const municipality = text(input.municipality);
+  const state = text(input.state);
+  const groupHistory = (input.groupHistory ?? []).map((h) => ({
+    id: asUuid(h.id) ?? crypto.randomUUID(),
+    agencyId: id,
+    groupId: text(h.groupId),
+    brand: text(h.brand),
+    note: text(h.note),
+    recordedAt: h.recordedAt || nowIso(),
+  }));
   const agency: Agency = {
     id,
     groupId: text(input.groupId),
@@ -90,16 +102,21 @@ function assembleAgency(input: AgencyInput, existing?: Agency): Agency {
     email: text(input.email),
     phone: text(input.phone),
     address: text(input.address),
-    city: text(input.city),
-    municipality: text(input.municipality),
-    state: text(input.state),
+    city,
+    municipality,
+    state,
     postalCode: text(input.postalCode),
-    location: text(input.location),
+    location: text(input.location) || composedLocation({ municipality, city, state }),
+    mapsUrl: text(input.mapsUrl),
+    mapsPlaceName: text(input.mapsPlaceName),
+    mapsLat: input.mapsLat ?? null,
+    mapsLng: input.mapsLng ?? null,
     notes: text(input.notes),
     status: "draft",
     createdAt,
     updatedAt: nowIso(),
     sources,
+    groupHistory,
   };
   agency.status = deriveStatus(agency);
   return agency;
@@ -116,7 +133,22 @@ function rowToGroup(row: Record<string, unknown>): AutomotiveGroup {
   };
 }
 
-function rowToAgency(row: Record<string, unknown>, sources: SourceInvoice[]): Agency {
+function rowToHistory(row: Record<string, unknown>): AgencyGroupHistory {
+  return {
+    id: String(row.id),
+    agencyId: String(row.agency_id ?? ""),
+    groupId: String(row.group_id ?? ""),
+    brand: String(row.brand ?? ""),
+    note: String(row.note ?? ""),
+    recordedAt: String(row.recorded_at ?? nowIso()),
+  };
+}
+
+function rowToAgency(
+  row: Record<string, unknown>,
+  sources: SourceInvoice[],
+  groupHistory: AgencyGroupHistory[] = [],
+): Agency {
   const agency: Agency = {
     id: String(row.id),
     groupId: String(row.group_id ?? row.groupId ?? ""),
@@ -133,11 +165,16 @@ function rowToAgency(row: Record<string, unknown>, sources: SourceInvoice[]): Ag
     state: String(row.state ?? ""),
     postalCode: String(row.postal_code ?? row.postalCode ?? ""),
     location: String(row.location ?? ""),
+    mapsUrl: String(row.maps_url ?? row.mapsUrl ?? ""),
+    mapsPlaceName: String(row.maps_place_name ?? row.mapsPlaceName ?? ""),
+    mapsLat: row.maps_lat == null && row.mapsLat == null ? null : Number(row.maps_lat ?? row.mapsLat),
+    mapsLng: row.maps_lng == null && row.mapsLng == null ? null : Number(row.maps_lng ?? row.mapsLng),
     notes: String(row.notes ?? ""),
     status: (row.status as Agency["status"]) ?? "draft",
     createdAt: String(row.created_at ?? nowIso()),
     updatedAt: String(row.updated_at ?? nowIso()),
     sources,
+    groupHistory,
   };
   agency.status = deriveStatus(agency);
   return agency;
@@ -179,12 +216,13 @@ function rowToSource(row: Record<string, unknown>): SourceInvoice {
 async function supabaseSnapshot(): Promise<StoreSnapshot> {
   const client = getAgenciesClient();
   if (!client) return localList();
-  const { groupsTable, agenciesTable, sourceInvoicesTable } = passConfig.agencies;
+  const { groupsTable, agenciesTable, sourceInvoicesTable, groupHistoryTable } = passConfig.agencies;
 
-  const [groupsRes, agenciesRes, sourcesRes] = await Promise.all([
+  const [groupsRes, agenciesRes, sourcesRes, historyRes] = await Promise.all([
     client.from(groupsTable).select("*").order("name"),
     client.from(agenciesTable).select("*").order("name"),
     client.from(sourceInvoicesTable).select("*"),
+    client.from(groupHistoryTable).select("*"),
   ]);
 
   if (groupsRes.error || agenciesRes.error || sourcesRes.error) {
@@ -206,11 +244,22 @@ async function supabaseSnapshot(): Promise<StoreSnapshot> {
     byAgency.set(s.agencyId, list);
   }
 
+  const history = historyRes.error
+    ? []
+    : (historyRes.data ?? []).map((r) => rowToHistory(r as Record<string, unknown>));
+  const historyByAgency = new Map<string, AgencyGroupHistory[]>();
+  for (const h of history) {
+    const list = historyByAgency.get(h.agencyId) ?? [];
+    list.push(h);
+    historyByAgency.set(h.agencyId, list);
+  }
+
   return {
     groups: (groupsRes.data ?? []).map((r) => rowToGroup(r as Record<string, unknown>)),
-    agencies: (agenciesRes.data ?? []).map((r) =>
-      rowToAgency(r as Record<string, unknown>, byAgency.get(String((r as { id: string }).id)) ?? []),
-    ),
+    agencies: (agenciesRes.data ?? []).map((r) => {
+      const id = String((r as { id: string }).id);
+      return rowToAgency(r as Record<string, unknown>, byAgency.get(id) ?? [], historyByAgency.get(id) ?? []);
+    }),
   };
 }
 
@@ -290,8 +339,8 @@ export async function saveAgency(input: AgencyInput) {
     throw new Error("La ficha necesita un grupo automotriz. Elígelo o créalo antes de guardar.");
   }
 
-  const { agenciesTable, sourceInvoicesTable } = passConfig.agencies;
-  const { error } = await client.from(agenciesTable).upsert({
+  const { agenciesTable, sourceInvoicesTable, groupHistoryTable } = passConfig.agencies;
+  const payload = {
     id: agency.id,
     group_id: groupId,
     name: agency.name,
@@ -307,10 +356,19 @@ export async function saveAgency(input: AgencyInput) {
     state: agency.state,
     postal_code: agency.postalCode,
     location: agency.location,
+    maps_url: agency.mapsUrl,
+    maps_place_name: agency.mapsPlaceName,
+    maps_lat: agency.mapsLat,
+    maps_lng: agency.mapsLng,
     notes: agency.notes,
     status: agency.status,
     updated_at: agency.updatedAt,
-  });
+  };
+  let { error } = await client.from(agenciesTable).upsert(payload);
+  if (error && /maps_url|maps_place_name|maps_lat|maps_lng/i.test(error.message)) {
+    const { maps_url: _u, maps_place_name: _n, maps_lat: _la, maps_lng: _ln, ...legacy } = payload;
+    ({ error } = await client.from(agenciesTable).upsert(legacy));
+  }
   if (error) throw new Error(error.message);
 
   await client.from(sourceInvoicesTable).delete().eq("agency_id", agency.id);
@@ -345,6 +403,24 @@ export async function saveAgency(input: AgencyInput) {
       })),
     );
     if (srcError) throw new Error(srcError.message);
+  }
+
+  const historyDelete = await client.from(groupHistoryTable).delete().eq("agency_id", agency.id);
+  if (!historyDelete.error) {
+    const rows = agency.groupHistory.filter((h) => h.groupId && h.groupId !== groupId);
+    if (rows.length) {
+      const { error: histError } = await client.from(groupHistoryTable).insert(
+        rows.map((h) => ({
+          id: h.id,
+          agency_id: agency.id,
+          group_id: h.groupId,
+          brand: h.brand,
+          note: h.note,
+          recorded_at: h.recordedAt,
+        })),
+      );
+      if (histError) throw new Error(histError.message);
+    }
   }
 
   bustCatalogCache(agency.id);

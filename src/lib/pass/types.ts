@@ -75,6 +75,15 @@ export type SourceInvoice = {
   createdAt: string;
 };
 
+export type AgencyGroupHistory = {
+  id: string;
+  agencyId: string;
+  groupId: string;
+  brand: string;
+  note: string;
+  recordedAt: string;
+};
+
 export type Agency = {
   id: string;
   groupId: string;
@@ -90,17 +99,25 @@ export type Agency = {
   municipality: string;
   state: string;
   postalCode: string;
+  /** Derivada de municipio / ciudad / estado. Ya no se captura a mano. */
   location: string;
+  mapsUrl: string;
+  mapsPlaceName: string;
+  mapsLat: number | null;
+  mapsLng: number | null;
   notes: string;
   status: AgencyStatus;
   createdAt: string;
   updatedAt: string;
   sources: SourceInvoice[];
+  /** Grupos / marcas que esta agencia vendió antes del grupo actual. */
+  groupHistory: AgencyGroupHistory[];
 };
 
-export type AgencyInput = Omit<Agency, "id" | "createdAt" | "updatedAt" | "status" | "sources"> & {
+export type AgencyInput = Omit<Agency, "id" | "createdAt" | "updatedAt" | "status" | "sources" | "groupHistory"> & {
   id?: string;
   sources: Array<Omit<SourceInvoice, "id" | "agencyId" | "createdAt"> & { id?: string }>;
+  groupHistory?: Array<Omit<AgencyGroupHistory, "agencyId"> & { id?: string; agencyId?: string }>;
 };
 
 export type StoreSnapshot = {

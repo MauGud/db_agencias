@@ -4,20 +4,24 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Check, FloppyDisk } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { AgencyGroupHistoryPanel } from "@/components/agencies/group-history-panel";
 import {
   AddSourceButton,
   InvoiceSourceCard,
   blankSource,
   type SourceDraft,
 } from "@/components/agencies/invoice-source-card";
+import { AgencyMapsCard } from "@/components/agencies/maps-card";
 import { StatusPill } from "@/components/composed/status-pill";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { composedLocation, parseMexicanAddress } from "@/lib/mexico-address";
 import { completenessItems, completenessScore, deriveStatus } from "@/lib/pass/completeness";
-import type { Agency, AutomotiveGroup } from "@/lib/pass/types";
+import type { Agency, AgencyGroupHistory, AutomotiveGroup } from "@/lib/pass/types";
+import type { GeoResolveResult } from "@/lib/pass/places";
 import { MEXICAN_STATES, rfcError } from "@/lib/mexico";
 import { cn } from "@/lib/utils";
 
@@ -35,9 +39,14 @@ type FormState = {
   municipality: string;
   state: string;
   postalCode: string;
-  location: string;
+  mapsUrl: string;
+  mapsPlaceName: string;
+  mapsLat: number | null;
+  mapsLng: number | null;
+  mapsEmbedUrl: string;
   notes: string;
   sources: SourceDraft[];
+  groupHistory: AgencyGroupHistory[];
 };
 
 function fromAgency(agency: Agency): FormState {
@@ -55,12 +64,22 @@ function fromAgency(agency: Agency): FormState {
     municipality: agency.municipality,
     state: agency.state,
     postalCode: agency.postalCode,
-    location: agency.location,
+    mapsUrl: agency.mapsUrl ?? "",
+    mapsPlaceName: agency.mapsPlaceName ?? "",
+    mapsLat: agency.mapsLat ?? null,
+    mapsLng: agency.mapsLng ?? null,
+    mapsEmbedUrl:
+      agency.mapsLat != null && agency.mapsLng != null
+        ? `https://www.google.com/maps?q=${agency.mapsLat},${agency.mapsLng}&z=16&output=embed`
+        : agency.mapsUrl
+          ? `https://www.google.com/maps?q=${encodeURIComponent(agency.name + " " + agency.address)}&output=embed`
+          : "",
     notes: agency.notes,
     sources:
       agency.sources.length > 0
         ? agency.sources.map(({ agencyId: _a, createdAt: _c, ...rest }) => rest)
         : [blankSource()],
+    groupHistory: agency.groupHistory ?? [],
   };
 }
 
@@ -79,9 +98,14 @@ function emptyForm(groupId = ""): FormState {
     municipality: "",
     state: "",
     postalCode: "",
-    location: "",
+    mapsUrl: "",
+    mapsPlaceName: "",
+    mapsLat: null,
+    mapsLng: null,
+    mapsEmbedUrl: "",
     notes: "",
     sources: [blankSource()],
+    groupHistory: [],
   };
 }
 
@@ -102,7 +126,13 @@ export function AgencyForm({
   const [newGroup, setNewGroup] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [rfcHits, setRfcHits] = React.useState<{ id: string; name: string }[]>([]);
+  const [geoLoading, setGeoLoading] = React.useState(false);
+  const [geoReview, setGeoReview] = React.useState<{
+    nameMismatch: boolean;
+    reviewMessage: string | null;
+  }>({ nameMismatch: false, reviewMessage: null });
   const submitRef = React.useRef<() => Promise<void>>(async () => {});
+  const lastResolvedAddress = React.useRef(form.address);
 
   const previewAgency = {
     ...form,
@@ -143,18 +173,65 @@ export function AgencyForm({
     return () => clearTimeout(t);
   }, [form.rfc, agency?.id]);
 
+  React.useEffect(() => {
+    const name = form.name.trim();
+    const address = form.address.trim();
+    if (name.length < 3 && address.length < 8) {
+      setGeoLoading(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setGeoLoading(true);
+      const addressChanged = address !== lastResolvedAddress.current;
+      try {
+        const res = await fetch("/api/geo/resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, address }),
+        });
+        const data = (await res.json()) as GeoResolveResult & { error?: string };
+        if (!res.ok || data.error) return;
+        lastResolvedAddress.current = address;
+        setForm((f) => ({
+          ...f,
+          state: addressChanged ? data.state || f.state : f.state || data.state,
+          municipality: addressChanged ? data.municipality || f.municipality : f.municipality || data.municipality,
+          city: addressChanged ? data.city || f.city : f.city || data.city,
+          postalCode: addressChanged ? data.postalCode || f.postalCode : f.postalCode || data.postalCode,
+          mapsUrl: data.mapsUrl || f.mapsUrl,
+          mapsPlaceName: data.mapsPlaceName,
+          mapsLat: data.mapsLat,
+          mapsLng: data.mapsLng,
+          mapsEmbedUrl: data.mapsEmbedUrl || f.mapsEmbedUrl,
+        }));
+        setGeoReview({
+          nameMismatch: data.nameMismatch,
+          reviewMessage: data.reviewMessage,
+        });
+      } catch {
+        /* el mapa se arma igual con la búsqueda de Google */
+      } finally {
+        setGeoLoading(false);
+      }
+    }, 700);
+    return () => clearTimeout(t);
+  }, [form.name, form.address]);
+
   function patch(partial: Partial<FormState>) {
     setForm((f) => ({ ...f, ...partial }));
   }
 
-  async function createGroup(nameOverride?: string) {
+  async function createGroup(nameOverride?: string, assignCurrent = true, brands?: string[]) {
     const name = (nameOverride ?? newGroup).trim();
     if (!name) return null;
     const res = await fetch("/api/groups", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify({ name, brands: form.brand ? [form.brand] : [] }),
+      body: JSON.stringify({
+        name,
+        brands: brands ?? (form.brand ? [form.brand] : []),
+      }),
     });
     const data = (await res.json()) as { group?: AutomotiveGroup; error?: string };
     if (!res.ok || !data.group) {
@@ -162,8 +239,10 @@ export function AgencyForm({
       return null;
     }
     setGroups((g) => [...g, data.group!].sort((a, b) => a.name.localeCompare(b.name, "es")));
-    patch({ groupId: data.group.id });
-    setNewGroup("");
+    if (assignCurrent) {
+      patch({ groupId: data.group.id });
+      setNewGroup("");
+    }
     toast(`Grupo ${data.group.name} creado.`);
     return data.group;
   }
@@ -185,11 +264,20 @@ export function AgencyForm({
         toast("Elige o crea un grupo automotriz. Cada ficha pertenece a un grupo.");
         return;
       }
+      const { mapsEmbedUrl: _embed, ...rest } = form;
       const res = await fetch(agency ? `/api/agencies/${agency.id}` : "/api/agencies", {
         method: agency ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ ...form, groupId }),
+        body: JSON.stringify({
+          ...rest,
+          groupId,
+          location: composedLocation({
+            municipality: form.municipality,
+            city: form.city,
+            state: form.state,
+          }),
+        }),
       });
       const data = (await res.json()) as { agency?: Agency; error?: string };
       if (!res.ok || !data.agency) {
@@ -289,6 +377,14 @@ export function AgencyForm({
                 </Button>
               </div>
             </Field>
+            <AgencyGroupHistoryPanel
+              groups={groups}
+              currentGroupId={form.groupId}
+              currentBrand={form.brand}
+              history={form.groupHistory}
+              onChange={(groupHistory) => patch({ groupHistory })}
+              onCreateGroup={(name, brands) => createGroup(name, false, brands)}
+            />
             <Field id="legalName" label="Nombre / razón social">
               <Input
                 id="legalName"
@@ -317,12 +413,27 @@ export function AgencyForm({
         <section className="flex flex-col gap-6">
           <h2 className="text-lg font-semibold">Ubicación</h2>
           <div className="grid gap-6 sm:grid-cols-2">
-            <Field id="address" label="Dirección de la agencia" className="sm:col-span-2">
+            <Field
+              id="address"
+              label="Dirección de la agencia"
+              className="sm:col-span-2"
+              hint="Pega la dirección de la factura. Estado, municipio, ciudad y CP se llenan solos."
+            >
               <Input
                 id="address"
-                placeholder="Av. Presidente Masaryk No. 207, Col. Polanco"
+                placeholder="Av. Presidente Masaryk No. 207, Col. Polanco, Miguel Hidalgo, Ciudad de México, 11560"
                 value={form.address}
-                onChange={(e) => patch({ address: e.target.value })}
+                onChange={(e) => {
+                  const address = e.target.value;
+                  const parsed = parseMexicanAddress(address);
+                  patch({
+                    address,
+                    ...(parsed.state ? { state: parsed.state } : {}),
+                    ...(parsed.municipality ? { municipality: parsed.municipality } : {}),
+                    ...(parsed.city ? { city: parsed.city } : {}),
+                    ...(parsed.postalCode ? { postalCode: parsed.postalCode } : {}),
+                  });
+                }}
               />
             </Field>
             <Field id="state" label="Estado">
@@ -365,14 +476,28 @@ export function AgencyForm({
                 onChange={(e) => patch({ postalCode: e.target.value })}
               />
             </Field>
-            <Field id="location" label="Ubicación" hint="Texto libre, como se lee en la factura" className="sm:col-span-2">
-              <Input
-                id="location"
-                placeholder="Miguel Hidalgo, Ciudad de México"
-                value={form.location}
-                onChange={(e) => patch({ location: e.target.value })}
-              />
-            </Field>
+            <AgencyMapsCard
+              loading={geoLoading}
+              mapsUrl={
+                form.mapsUrl ||
+                ([form.name, form.address].filter(Boolean).join(" ")
+                  ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                      [form.name, form.address].filter(Boolean).join(" "),
+                    )}`
+                  : "")
+              }
+              mapsEmbedUrl={
+                form.mapsEmbedUrl ||
+                ([form.name, form.address].filter(Boolean).join(" ")
+                  ? `https://www.google.com/maps?q=${encodeURIComponent(
+                      [form.name, form.address].filter(Boolean).join(" "),
+                    )}&output=embed`
+                  : "")
+              }
+              placeName={form.mapsPlaceName}
+              nameMismatch={geoReview.nameMismatch}
+              reviewMessage={geoReview.reviewMessage}
+            />
           </div>
         </section>
 

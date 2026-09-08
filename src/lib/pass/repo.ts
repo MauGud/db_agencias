@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { connection } from "next/server";
 import { agenciesBackend, isServerlessRuntime, passConfig, passKeysMissingMessage } from "./config";
 import { deriveStatus } from "./completeness";
+import { migrateIdentifiedSeal, normalizeYesNo, syncInvoiceFlags } from "./invoice-flags";
 import { localDeleteAgency, localList, localSaveAgency, localSaveGroup } from "./local-store";
 import { getAgenciesClient } from "./supabase";
 import type { Agency, AgencyGroupHistory, AgencyInput, AutomotiveGroup, SourceInvoice, StoreSnapshot } from "./types";
@@ -40,7 +41,21 @@ function isBlankSource(partial: AgencyInput["sources"][number]) {
     partial.total != null ||
     text(partial.dictamen) ||
     text(partial.qualityNotes) ||
-    (partial.qualityReasons?.length ?? 0) > 0
+    (partial.qualityReasons?.length ?? 0) > 0 ||
+    partial.amda ||
+    partial.blacklisted ||
+    partial.isFake ||
+    (partial.tags?.length ?? 0) > 0 ||
+    text(partial.hasSignature) ||
+    text(partial.signatureType) ||
+    text(partial.signatureLocation) ||
+    text(partial.sealsVisible) ||
+    text(partial.identifiedSeal) ||
+    text(partial.sealLocation) ||
+    text(partial.amdaFound) ||
+    text(partial.amdaMatches) ||
+    text(partial.satVerification) ||
+    text(partial.satResult)
   );
 }
 
@@ -52,7 +67,7 @@ function bustCatalogCache(agencyId?: string) {
 }
 
 function emptySource(agencyId: string, partial: AgencyInput["sources"][number]): SourceInvoice {
-  return {
+  return syncInvoiceFlags({
     id: asUuid(partial.id) ?? crypto.randomUUID(),
     agencyId,
     invoiceId: asUuid(partial.invoiceId),
@@ -66,20 +81,30 @@ function emptySource(agencyId: string, partial: AgencyInput["sources"][number]):
     invoiceDate: text(partial.invoiceDate),
     rfcReceptor: text(partial.rfcReceptor),
     total: partial.total ?? null,
-    hasSignature: text(partial.hasSignature),
+    hasSignature: normalizeYesNo(text(partial.hasSignature)),
     signatureType: text(partial.signatureType),
-    sealsVisible: text(partial.sealsVisible),
-    identifiedSeal: text(partial.identifiedSeal),
+    signatureLocation: text(partial.signatureLocation),
+    sealsVisible: normalizeYesNo(text(partial.sealsVisible)),
+    ...(() => {
+      const seal = migrateIdentifiedSeal(text(partial.identifiedSeal), text(partial.sealLocation));
+      return { identifiedSeal: normalizeYesNo(seal.identifiedSeal), sealLocation: seal.sealLocation };
+    })(),
     qrPresent: text(partial.qrPresent),
     qrFunctional: text(partial.qrFunctional),
-    satVerification: text(partial.satVerification),
-    satResult: text(partial.satResult),
+    satVerification: normalizeYesNo(text(partial.satVerification)),
+    satResult: normalizeYesNo(text(partial.satResult)),
+    amda: Boolean(partial.amda),
+    amdaFound: normalizeYesNo(text(partial.amdaFound)),
+    amdaMatches: normalizeYesNo(text(partial.amdaMatches)),
+    blacklisted: Boolean(partial.blacklisted),
+    isFake: Boolean(partial.isFake),
+    tags: Array.isArray(partial.tags) ? partial.tags.filter(Boolean) : [],
     documentQuality: partial.documentQuality ?? "",
     dictamen: text(partial.dictamen),
     qualityReasons: partial.qualityReasons ?? [],
     qualityNotes: text(partial.qualityNotes),
     createdAt: nowIso(),
-  };
+  });
 }
 
 function assembleAgency(input: AgencyInput, existing?: Agency): Agency {
@@ -186,8 +211,12 @@ function rowToAgency(
   return agency;
 }
 
+function asBool(value: unknown) {
+  return value === true || value === "true" || value === "t";
+}
+
 function rowToSource(row: Record<string, unknown>): SourceInvoice {
-  return {
+  return syncInvoiceFlags({
     id: String(row.id),
     agencyId: String(row.agency_id ?? ""),
     invoiceId: (row.invoice_id as string | null) ?? null,
@@ -201,14 +230,27 @@ function rowToSource(row: Record<string, unknown>): SourceInvoice {
     invoiceDate: String(row.invoice_date ?? ""),
     rfcReceptor: String(row.rfc_receptor ?? ""),
     total: row.total == null ? null : Number(row.total),
-    hasSignature: String(row.has_signature ?? ""),
+    hasSignature: normalizeYesNo(String(row.has_signature ?? "")),
     signatureType: String(row.signature_type ?? ""),
-    sealsVisible: String(row.seals_visible ?? ""),
-    identifiedSeal: String(row.identified_seal ?? ""),
+    signatureLocation: String(row.signature_location ?? row.signatureLocation ?? ""),
+    sealsVisible: normalizeYesNo(String(row.seals_visible ?? "")),
+    ...(() => {
+      const seal = migrateIdentifiedSeal(
+        String(row.identified_seal ?? ""),
+        String(row.seal_location ?? row.sealLocation ?? ""),
+      );
+      return { identifiedSeal: normalizeYesNo(seal.identifiedSeal), sealLocation: seal.sealLocation };
+    })(),
     qrPresent: String(row.qr_present ?? ""),
     qrFunctional: String(row.qr_functional ?? ""),
-    satVerification: String(row.sat_verification ?? ""),
-    satResult: String(row.sat_result ?? ""),
+    satVerification: normalizeYesNo(String(row.sat_verification ?? "")),
+    satResult: normalizeYesNo(String(row.sat_result ?? "")),
+    amda: asBool(row.amda),
+    amdaFound: normalizeYesNo(String(row.amda_found ?? row.amdaFound ?? "")),
+    amdaMatches: normalizeYesNo(String(row.amda_matches ?? row.amdaMatches ?? "")),
+    blacklisted: asBool(row.blacklisted),
+    isFake: asBool(row.is_fake ?? row.isFake),
+    tags: Array.isArray(row.tags) ? (row.tags as string[]) : [],
     documentQuality: (row.document_quality as SourceInvoice["documentQuality"]) ?? "",
     dictamen: String(row.dictamen ?? ""),
     qualityReasons: Array.isArray(row.quality_reasons)
@@ -216,7 +258,7 @@ function rowToSource(row: Record<string, unknown>): SourceInvoice {
       : [],
     qualityNotes: String(row.quality_notes ?? ""),
     createdAt: String(row.created_at ?? nowIso()),
-  };
+  });
 }
 
 async function supabaseSnapshot(): Promise<StoreSnapshot> {
@@ -435,35 +477,67 @@ export async function saveAgency(input: AgencyInput) {
 
   await client.from(sourceInvoicesTable).delete().eq("agency_id", agency.id);
   if (agency.sources.length) {
-    const { error: srcError } = await client.from(sourceInvoicesTable).insert(
-      agency.sources.map((s) => ({
-        id: s.id,
-        agency_id: agency.id,
-        invoice_id: s.invoiceId,
-        file_url: s.fileUrl,
-        vehicle_id: s.vehicleId,
-        file_id: s.fileId,
-        label: s.label,
-        document_type: s.documentType,
-        uuid: s.uuid,
-        internal_folio: s.internalFolio,
-        invoice_date: s.invoiceDate || null,
-        rfc_receptor: s.rfcReceptor,
-        total: s.total,
-        has_signature: s.hasSignature,
-        signature_type: s.signatureType,
-        seals_visible: s.sealsVisible,
-        identified_seal: s.identifiedSeal,
-        qr_present: s.qrPresent,
-        qr_functional: s.qrFunctional,
-        sat_verification: s.satVerification,
-        sat_result: s.satResult,
-        document_quality: s.documentQuality,
-        dictamen: s.dictamen,
-        quality_reasons: s.qualityReasons,
-        quality_notes: s.qualityNotes,
-      })),
-    );
+    const rows = agency.sources.map((s) => ({
+      id: s.id,
+      agency_id: agency.id,
+      invoice_id: s.invoiceId,
+      file_url: s.fileUrl,
+      vehicle_id: s.vehicleId,
+      file_id: s.fileId,
+      label: s.label,
+      document_type: s.documentType,
+      uuid: s.uuid,
+      internal_folio: s.internalFolio,
+      invoice_date: s.invoiceDate || null,
+      rfc_receptor: s.rfcReceptor,
+      total: s.total,
+      has_signature: s.hasSignature,
+      signature_type: s.signatureType,
+      signature_location: s.signatureLocation,
+      seals_visible: s.sealsVisible,
+      identified_seal: s.identifiedSeal,
+      seal_location: s.sealLocation,
+      qr_present: s.qrPresent,
+      qr_functional: s.qrFunctional,
+      sat_verification: s.satVerification,
+      sat_result: s.satResult,
+      amda: s.amda,
+      amda_found: s.amdaFound,
+      amda_matches: s.amdaMatches,
+      blacklisted: s.blacklisted,
+      is_fake: s.isFake,
+      tags: s.tags,
+      document_quality: s.documentQuality,
+      dictamen: s.dictamen,
+      quality_reasons: s.qualityReasons,
+      quality_notes: s.qualityNotes,
+    }));
+    let { error: srcError } = await client.from(sourceInvoicesTable).insert(rows);
+    if (srcError && /amda|blacklisted|is_fake|signature_location|seal_location|tags/i.test(srcError.message)) {
+      ({ error: srcError } = await client.from(sourceInvoicesTable).insert(
+        rows.map((row) => {
+          const {
+            amda: _a,
+            amda_found: _af,
+            amda_matches: _am,
+            signature_location: _sl,
+            seal_location: sealLocation,
+            blacklisted: _b,
+            is_fake: _f,
+            tags: _t,
+            ...legacy
+          } = row;
+          return {
+            ...legacy,
+            identified_seal:
+              (legacy.identified_seal === "Sí" || legacy.identified_seal === "No") && sealLocation
+                ? sealLocation
+                : legacy.identified_seal,
+            signature_type: [legacy.signature_type, _sl].filter(Boolean).join(" · "),
+          };
+        }),
+      ));
+    }
     if (srcError) throw new Error(srcError.message);
   }
 

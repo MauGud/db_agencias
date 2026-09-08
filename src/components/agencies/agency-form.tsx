@@ -9,6 +9,7 @@ import {
   AddSourceButton,
   InvoiceSourceCard,
   blankSource,
+  hydrateSourceDraft,
   type SourceDraft,
 } from "@/components/agencies/invoice-source-card";
 import { AgencyMapsCard } from "@/components/agencies/maps-card";
@@ -20,6 +21,7 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { composedLocation, parseMexicanAddress } from "@/lib/mexico-address";
 import { completenessItems, completenessScore, deriveStatus } from "@/lib/pass/completeness";
+import { syncInvoiceFlags } from "@/lib/pass/invoice-flags";
 import type { Agency, AgencyGroupHistory, AutomotiveGroup } from "@/lib/pass/types";
 import type { GeoResolveResult } from "@/lib/pass/places";
 import { MEXICAN_STATES, rfcError } from "@/lib/mexico";
@@ -77,7 +79,7 @@ function fromAgency(agency: Agency): FormState {
     notes: agency.notes,
     sources:
       agency.sources.length > 0
-        ? agency.sources.map(({ agencyId: _a, createdAt: _c, ...rest }) => rest)
+        ? agency.sources.map(({ agencyId: _a, createdAt: _c, ...rest }) => hydrateSourceDraft(rest))
         : [blankSource()],
     groupHistory: agency.groupHistory ?? [],
   };
@@ -284,6 +286,7 @@ export function AgencyForm({
         body: JSON.stringify({
           ...rest,
           groupId,
+          sources: rest.sources.map((s) => syncInvoiceFlags(hydrateSourceDraft(s))),
           location: composedLocation({
             municipality: form.municipality,
             city: form.city,

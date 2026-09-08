@@ -10,6 +10,7 @@ import {
   Trash,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
@@ -17,6 +18,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { parseInvoiceStorageUrl } from "@/lib/pass/invoice-url";
+import {
+  migrateIdentifiedSeal,
+  satForcesFake,
+  syncInvoiceFlags,
+  tagVariant,
+  type YesNo,
+} from "@/lib/pass/invoice-flags";
 import { QUALITY_REASONS, type QualityReason, type SourceInvoice } from "@/lib/pass/types";
 import { cn } from "@/lib/utils";
 
@@ -37,17 +45,100 @@ export function blankSource(): SourceDraft {
     total: null,
     hasSignature: "",
     signatureType: "",
+    signatureLocation: "",
     sealsVisible: "",
     identifiedSeal: "",
+    sealLocation: "",
     qrPresent: "",
     qrFunctional: "",
     satVerification: "",
     satResult: "",
+    amda: false,
+    amdaFound: "",
+    amdaMatches: "",
+    blacklisted: false,
+    isFake: false,
+    tags: [],
     documentQuality: "",
     dictamen: "",
     qualityReasons: [],
     qualityNotes: "",
   };
+}
+
+export function hydrateSourceDraft(partial?: Partial<SourceDraft>): SourceDraft {
+  const seal = migrateIdentifiedSeal(partial?.identifiedSeal ?? "", partial?.sealLocation ?? "");
+  return syncInvoiceFlags({
+    ...blankSource(),
+    ...partial,
+    ...seal,
+    amda: Boolean(partial?.amda),
+    blacklisted: Boolean(partial?.blacklisted),
+    isFake: Boolean(partial?.isFake),
+    tags: Array.isArray(partial?.tags) ? partial.tags : [],
+    qualityReasons: partial?.qualityReasons ?? [],
+  });
+}
+
+function YesNoSelect({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: YesNo) => void;
+}) {
+  return (
+    <Select value={value || "none"} onValueChange={(v) => onChange(v === "none" ? "" : (v as YesNo))}>
+      <SelectTrigger id={id}>
+        <SelectValue placeholder="Elige" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="none">Sin definir</SelectItem>
+        <SelectItem value="Sí">Sí</SelectItem>
+        <SelectItem value="No">No</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function FlagCheck({
+  id,
+  checked,
+  disabled,
+  label,
+  hint,
+  onCheckedChange,
+}: {
+  id: string;
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  hint?: string;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-md border border-border p-4",
+        disabled && "cursor-not-allowed opacity-80",
+      )}
+    >
+      <Checkbox
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        className="mt-0.5"
+        onCheckedChange={(v) => onCheckedChange(v === true)}
+      />
+      <span className="flex flex-col gap-1">
+        <span className="text-sm font-medium">{label}</span>
+        {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
+      </span>
+    </label>
+  );
 }
 
 export function InvoiceSourceCard({
@@ -64,11 +155,20 @@ export function InvoiceSourceCard({
   const [searching, setSearching] = React.useState(false);
   const parsed = source.fileUrl ? parseInvoiceStorageUrl(source.fileUrl) : null;
   const isImage = /\.(jpe?g|png|webp)$/i.test(source.fileUrl);
+  const satLockedFake = satForcesFake(source.satVerification, source.satResult);
+
+  function patch(next: Partial<SourceDraft>) {
+    const merged = { ...source, ...next };
+    if (satForcesFake(merged.satVerification, merged.satResult)) {
+      merged.isFake = true;
+    }
+    onChange(syncInvoiceFlags(merged));
+  }
 
   async function lookup() {
     const q = source.fileUrl.trim() || source.uuid.trim();
     if (!q) {
-      toast("Pega el URL de la factura o el UUID para buscarla.");
+      toast("Pega el URL de la factura para buscarla.");
       return;
     }
     setSearching(true);
@@ -80,8 +180,7 @@ export function InvoiceSourceCard({
       };
       const fromUrl = parseInvoiceStorageUrl(q);
       if (fromUrl) {
-        onChange({
-          ...source,
+        patch({
           fileUrl: fromUrl.fileUrl,
           vehicleId: fromUrl.vehicleId,
           fileId: fromUrl.fileId,
@@ -97,8 +196,7 @@ export function InvoiceSourceCard({
         toast("No encontramos esa factura en documentos analizados. El URL se conserva para cruzarlo después.");
         return;
       }
-      onChange({
-        ...source,
+      patch({
         invoiceId: hit.id,
         fileUrl: hit.fileUrl || source.fileUrl,
         vehicleId: hit.vehicleId,
@@ -114,8 +212,7 @@ export function InvoiceSourceCard({
 
   function toggleReason(reason: QualityReason) {
     const has = source.qualityReasons.includes(reason);
-    onChange({
-      ...source,
+    patch({
       qualityReasons: has
         ? source.qualityReasons.filter((r) => r !== reason)
         : [...source.qualityReasons, reason],
@@ -130,6 +227,15 @@ export function InvoiceSourceCard({
           <p className="text-sm text-muted-foreground">
             El documento que llevó a esta agencia. Se cruza con la tabla de documentos analizados (`invoice`).
           </p>
+          {source.tags.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {source.tags.map((tag) => (
+                <Badge key={tag} variant={tagVariant(tag)}>
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
         </div>
         <Button type="button" variant="ghost" size="icon" aria-label="Quitar factura origen" onClick={onRemove}>
           <Trash weight="fill" />
@@ -140,7 +246,7 @@ export function InvoiceSourceCard({
         <Field
           id={`fileUrl-${index}`}
           label="URL de la factura"
-          hint="Pega el link de Storage o busca por UUID. En fase 2 este campo consulta la base de Nexcar."
+          hint="Pega el link de Storage. En fase 2 este campo consulta la base de Nexcar."
         >
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -150,7 +256,7 @@ export function InvoiceSourceCard({
                 className="pl-9 font-mono text-xs"
                 placeholder="https://….supabase.co/storage/v1/object/public/vehicles/prod/…"
                 value={source.fileUrl}
-                onChange={(e) => onChange({ ...source, fileUrl: e.target.value })}
+                onChange={(e) => patch({ fileUrl: e.target.value })}
               />
             </div>
             <Button type="button" variant="outline" onClick={lookup} disabled={searching}>
@@ -210,15 +316,13 @@ export function InvoiceSourceCard({
               id={`label-${index}`}
               placeholder="Factura 12"
               value={source.label}
-              onChange={(e) => onChange({ ...source, label: e.target.value })}
+              onChange={(e) => patch({ label: e.target.value })}
             />
           </Field>
           <Field id={`docType-${index}`} label="Tipo de documento">
             <Select
               value={source.documentType || "none"}
-              onValueChange={(v) =>
-                onChange({ ...source, documentType: v === "none" ? "" : (v as SourceDraft["documentType"]) })
-              }
+              onValueChange={(v) => patch({ documentType: v === "none" ? "" : (v as SourceDraft["documentType"]) })}
             >
               <SelectTrigger id={`docType-${index}`}>
                 <SelectValue placeholder="Elige" />
@@ -230,61 +334,11 @@ export function InvoiceSourceCard({
               </SelectContent>
             </Select>
           </Field>
-          <Field id={`uuid-${index}`} label="Folio fiscal / UUID" hint="Como aparece en el CFDI">
-            <Input
-              id={`uuid-${index}`}
-              className="font-mono"
-              placeholder="62C5D7E8-8A9A-41A3-831C-9F9BCB5132BD"
-              value={source.uuid}
-              onChange={(e) => onChange({ ...source, uuid: e.target.value })}
-            />
-          </Field>
-          <Field id={`folio-${index}`} label="Folio interno">
-            <Input
-              id={`folio-${index}`}
-              placeholder="UFE000002538"
-              value={source.internalFolio}
-              onChange={(e) => onChange({ ...source, internalFolio: e.target.value })}
-            />
-          </Field>
-          <Field id={`date-${index}`} label="Fecha factura">
-            <Input
-              id={`date-${index}`}
-              type="date"
-              value={source.invoiceDate}
-              onChange={(e) => onChange({ ...source, invoiceDate: e.target.value })}
-            />
-          </Field>
-          <Field id={`rfcRec-${index}`} label="RFC receptor">
-            <Input
-              id={`rfcRec-${index}`}
-              className="font-mono"
-              placeholder="XAXX010101000"
-              value={source.rfcReceptor}
-              onChange={(e) => onChange({ ...source, rfcReceptor: e.target.value.toUpperCase() })}
-            />
-          </Field>
-          <Field id={`total-${index}`} label="Total">
-            <Input
-              id={`total-${index}`}
-              type="number"
-              step="0.01"
-              placeholder="548500"
-              value={source.total ?? ""}
-              onChange={(e) =>
-                onChange({
-                  ...source,
-                  total: e.target.value === "" ? null : Number(e.target.value),
-                })
-              }
-            />
-          </Field>
           <Field id={`quality-${index}`} label="Calidad del documento">
             <Select
               value={source.documentQuality || "none"}
               onValueChange={(v) =>
-                onChange({
-                  ...source,
+                patch({
                   documentQuality: v === "none" ? "" : (v as SourceDraft["documentQuality"]),
                 })
               }
@@ -302,44 +356,117 @@ export function InvoiceSourceCard({
           </Field>
         </div>
 
-        <div className="grid gap-6 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <FlagCheck
+            id={`amda-${index}`}
+            checked={source.amda}
+            label="Factura AMDA"
+            hint="Si se marca, aparecen las validaciones de AMDA y la etiqueta AMDA."
+            onCheckedChange={(checked) =>
+              patch({
+                amda: checked,
+                amdaFound: checked ? source.amdaFound : "",
+                amdaMatches: checked ? source.amdaMatches : "",
+              })
+            }
+          />
+          <FlagCheck
+            id={`blacklist-${index}`}
+            checked={source.blacklisted}
+            label="Lista negra"
+            hint="Marca la factura y genera la etiqueta Lista negra."
+            onCheckedChange={(checked) => patch({ blacklisted: checked })}
+          />
+          <FlagCheck
+            id={`fake-${index}`}
+            checked={source.isFake}
+            disabled={satLockedFake}
+            label="Falsa"
+            hint={
+              satLockedFake
+                ? "Se marcó sola porque la verificación SAT o la coincidencia en el SAT es No."
+                : "Se marca sola si la verificación SAT o la coincidencia en el SAT es No."
+            }
+            onCheckedChange={(checked) => {
+              if (!checked && satLockedFake) {
+                toast("No se puede quitar Falsa mientras la verificación SAT o la coincidencia sea No.");
+                return;
+              }
+              patch({ isFake: checked });
+            }}
+          />
+        </div>
+
+        {source.amda ? (
+          <div className="grid gap-6 rounded-md border border-border p-4 sm:grid-cols-2">
+            <Field id={`amdaFound-${index}`} label="Factura encontrada en AMDA">
+              <YesNoSelect
+                id={`amdaFound-${index}`}
+                value={source.amdaFound}
+                onChange={(amdaFound) => patch({ amdaFound })}
+              />
+            </Field>
+            <Field id={`amdaMatches-${index}`} label="¿El resultado del sitio coincide con los datos?">
+              <YesNoSelect
+                id={`amdaMatches-${index}`}
+                value={source.amdaMatches}
+                onChange={(amdaMatches) => patch({ amdaMatches })}
+              />
+            </Field>
+          </div>
+        ) : null}
+
+        <div className="grid gap-6 sm:grid-cols-3">
           <Field id={`sig-${index}`} label="¿Tiene firma?">
-            <Input
-              id={`sig-${index}`}
-              placeholder="Sí / No visible"
-              value={source.hasSignature}
-              onChange={(e) => onChange({ ...source, hasSignature: e.target.value })}
-            />
+            <YesNoSelect id={`sig-${index}`} value={source.hasSignature} onChange={(hasSignature) => patch({ hasSignature })} />
           </Field>
           <Field id={`sigType-${index}`} label="Tipo de firma">
             <Input
               id={`sigType-${index}`}
               placeholder="Firma autógrafa"
               value={source.signatureType}
-              onChange={(e) => onChange({ ...source, signatureType: e.target.value })}
+              onChange={(e) => patch({ signatureType: e.target.value })}
+            />
+          </Field>
+          <Field id={`sigLoc-${index}`} label="¿Dónde se ubica?">
+            <Input
+              id={`sigLoc-${index}`}
+              placeholder="Pie de página, recuadro izquierdo…"
+              value={source.signatureLocation}
+              onChange={(e) => patch({ signatureLocation: e.target.value })}
             />
           </Field>
           <Field id={`seals-${index}`} label="Sellos visibles">
-            <Input
+            <YesNoSelect
               id={`seals-${index}`}
-              placeholder="Sí"
               value={source.sealsVisible}
-              onChange={(e) => onChange({ ...source, sealsVisible: e.target.value })}
+              onChange={(sealsVisible) => patch({ sealsVisible })}
             />
           </Field>
           <Field id={`sealId-${index}`} label="Sello identificado">
-            <Input
+            <YesNoSelect
               id={`sealId-${index}`}
               value={source.identifiedSeal}
-              onChange={(e) => onChange({ ...source, identifiedSeal: e.target.value })}
+              onChange={(identifiedSeal) => patch({ identifiedSeal })}
             />
           </Field>
+          <Field id={`sealLoc-${index}`} label="¿Dónde se ubica?">
+            <Input
+              id={`sealLoc-${index}`}
+              placeholder="Sello SAT, membrete, folio…"
+              value={source.sealLocation}
+              onChange={(e) => patch({ sealLocation: e.target.value })}
+            />
+          </Field>
+        </div>
+
+        <div className="grid gap-6 sm:grid-cols-2">
           <Field id={`qr-${index}`} label="QR">
             <Input
               id={`qr-${index}`}
               placeholder="Sí"
               value={source.qrPresent}
-              onChange={(e) => onChange({ ...source, qrPresent: e.target.value })}
+              onChange={(e) => patch({ qrPresent: e.target.value })}
             />
           </Field>
           <Field id={`qrFn-${index}`} label="QR funcional">
@@ -347,22 +474,18 @@ export function InvoiceSourceCard({
               id={`qrFn-${index}`}
               placeholder="Sí / No / Fraude"
               value={source.qrFunctional}
-              onChange={(e) => onChange({ ...source, qrFunctional: e.target.value })}
+              onChange={(e) => patch({ qrFunctional: e.target.value })}
             />
           </Field>
           <Field id={`sat-${index}`} label="Verificación SAT">
-            <Input
+            <YesNoSelect
               id={`sat-${index}`}
               value={source.satVerification}
-              onChange={(e) => onChange({ ...source, satVerification: e.target.value })}
+              onChange={(satVerification) => patch({ satVerification })}
             />
           </Field>
-          <Field id={`satRes-${index}`} label="Resultado SAT">
-            <Input
-              id={`satRes-${index}`}
-              value={source.satResult}
-              onChange={(e) => onChange({ ...source, satResult: e.target.value })}
-            />
+          <Field id={`satRes-${index}`} label="¿El resultado en el SAT coincide?">
+            <YesNoSelect id={`satRes-${index}`} value={source.satResult} onChange={(satResult) => patch({ satResult })} />
           </Field>
         </div>
 
@@ -371,7 +494,7 @@ export function InvoiceSourceCard({
             id={`dictamen-${index}`}
             placeholder="Buena / Mala calidad / lo que observaste al leerla"
             value={source.dictamen}
-            onChange={(e) => onChange({ ...source, dictamen: e.target.value })}
+            onChange={(e) => patch({ dictamen: e.target.value })}
           />
         </Field>
 

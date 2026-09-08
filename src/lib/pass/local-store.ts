@@ -2,7 +2,22 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { seedAgencies, seedGroups } from "@/lib/seed/agencies";
 import { isServerlessRuntime, passKeysMissingMessage } from "./config";
-import type { Agency, AutomotiveGroup, StoreSnapshot } from "./types";
+import { migrateIdentifiedSeal, syncInvoiceFlags } from "./invoice-flags";
+import type { Agency, AutomotiveGroup, SourceInvoice, StoreSnapshot } from "./types";
+
+function withSourceDefaults(source: SourceInvoice): SourceInvoice {
+  return syncInvoiceFlags({
+    ...source,
+    signatureLocation: source.signatureLocation ?? "",
+    ...migrateIdentifiedSeal(source.identifiedSeal ?? "", source.sealLocation ?? ""),
+    amda: Boolean(source.amda),
+    amdaFound: source.amdaFound ?? "",
+    amdaMatches: source.amdaMatches ?? "",
+    blacklisted: Boolean(source.blacklisted),
+    isFake: Boolean(source.isFake),
+    tags: Array.isArray(source.tags) ? source.tags : [],
+  });
+}
 
 function withAgencyDefaults(agency: Agency): Agency {
   return {
@@ -12,6 +27,7 @@ function withAgencyDefaults(agency: Agency): Agency {
     mapsLat: agency.mapsLat ?? null,
     mapsLng: agency.mapsLng ?? null,
     groupHistory: agency.groupHistory ?? [],
+    sources: (agency.sources ?? []).map(withSourceDefaults),
   };
 }
 

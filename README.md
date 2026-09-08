@@ -15,7 +15,7 @@ Abre [http://localhost:3000](http://localhost:3000). Sin keys de Pass, guarda en
 
 Toda la persistencia vive en `src/lib/pass/`. El UI no sabe en qué proyecto está.
 
-1. **Fase 1** — cuenta personal (padre): copia `.env.example` a `.env.local`, llena URL + service role, corre `supabase/migrations/001_agencies.sql` y `002_agency_maps_history.sql`.
+1. **Fase 1** — cuenta personal (padre): copia `.env.example` a `.env.local`, llena URL + service role, corre en el SQL Editor (cada archivo por separado) `001_agencies.sql`, `002_agency_maps_history.sql` y `003_invoice_validations.sql`.
 2. **Fase 2** — base de Nexcar: cambia las mismas variables. No toques queries ni pantallas.
 
 En **Vercel → Settings → Environment Variables (Production)** hace falta al menos:

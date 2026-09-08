@@ -1,5 +1,6 @@
 import type { Agency, AutomotiveGroup, SourceInvoice } from "@/lib/pass/types";
 import { deriveStatus } from "@/lib/pass/completeness";
+import { migrateIdentifiedSeal, syncInvoiceFlags } from "@/lib/pass/invoice-flags";
 
 const now = "2026-08-27T18:00:00.000Z";
 
@@ -22,19 +23,31 @@ function source(
     total: null,
     hasSignature: "",
     signatureType: "",
+    signatureLocation: "",
     sealsVisible: "",
     identifiedSeal: "",
+    sealLocation: "",
     qrPresent: "",
     qrFunctional: "",
     satVerification: "",
     satResult: "",
+    amda: false,
+    amdaFound: "",
+    amdaMatches: "",
+    blacklisted: false,
+    isFake: false,
+    tags: [],
     documentQuality: "",
     dictamen: "",
     qualityReasons: [],
     qualityNotes: "",
     createdAt: now,
   };
-  return { ...defaults, ...partial };
+  const merged = { ...defaults, ...partial };
+  return syncInvoiceFlags({
+    ...merged,
+    ...migrateIdentifiedSeal(merged.identifiedSeal, merged.sealLocation),
+  });
 }
 
 export const seedGroups: AutomotiveGroup[] = [
@@ -88,8 +101,8 @@ const agenciesRaw: Array<Omit<Agency, "mapsUrl" | "mapsPlaceName" | "mapsLat" | 
         identifiedSeal: "Audi Center Toluca",
         qrPresent: "Sí",
         qrFunctional: "Funcional",
-        satVerification: "Válida",
-        satResult: "Pendiente",
+        satVerification: "Sí",
+        satResult: "",
         documentQuality: "Buena",
         dictamen: "Buena",
       }),
@@ -130,7 +143,7 @@ const agenciesRaw: Array<Omit<Agency, "mapsUrl" | "mapsPlaceName" | "mapsLat" | 
         invoiceDate: "2016-07-25",
         rfcReceptor: "NABM610720A68",
         total: 338214,
-        hasSignature: "No visible",
+        hasSignature: "No",
         signatureType: "No visible",
         sealsVisible: "Sí",
         identifiedSeal: "Sello digital del CFDI / Sello del SAT",

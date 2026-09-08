@@ -43,6 +43,8 @@ export type AutomotiveGroup = {
 /**
  * Factura que originó o confirma la ficha. Se liga a la tabla de documentos
  * analizados (`invoice`) vía URL de storage y, cuando existe, `invoiceId`.
+ * Folio fiscal, folio interno, fecha, RFC receptor y total se conservan en
+ * el modelo para fichas viejas, pero ya no se capturan en el formulario.
  */
 export type SourceInvoice = {
   id: string;
@@ -62,12 +64,24 @@ export type SourceInvoice = {
   total: number | null;
   hasSignature: string;
   signatureType: string;
+  /** Dónde se ubica la firma en el documento. */
+  signatureLocation: string;
   sealsVisible: string;
+  /** Sí / No. El texto descriptivo del sello vive en `sealLocation`. */
   identifiedSeal: string;
+  sealLocation: string;
   qrPresent: string;
   qrFunctional: string;
   satVerification: string;
+  /** ¿El resultado en el SAT coincide? Sí / No. */
   satResult: string;
+  amda: boolean;
+  amdaFound: string;
+  amdaMatches: string;
+  blacklisted: boolean;
+  isFake: boolean;
+  /** Etiquetas derivadas (AMDA, Lista negra, Falsa) y las que se agreguen después. */
+  tags: string[];
   documentQuality: DocumentQuality;
   dictamen: string;
   qualityReasons: QualityReason[];

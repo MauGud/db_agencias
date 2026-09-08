@@ -1,11 +1,17 @@
 import Link from "next/link";
 import { MagnifyingGlass, Plus, Buildings } from "@phosphor-icons/react/dist/ssr";
 import { StatusPill } from "@/components/composed/status-pill";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { tagVariant } from "@/lib/pass/invoice-flags";
 import { listCatalog } from "@/lib/pass/repo";
 import { maskRfc } from "@/lib/utils";
+
+function agencyTags(agency: { sources: { tags: string[] }[] }) {
+  return [...new Set(agency.sources.flatMap((s) => s.tags ?? []))];
+}
 
 export default async function AgenciasPage({
   searchParams,
@@ -18,7 +24,7 @@ export default async function AgenciasPage({
   const query = q.trim().toLowerCase();
   const filtered = query
     ? agencies.filter((a) =>
-        [a.name, a.legalName, a.rfc, a.city, a.state, a.brand, groupName(a.groupId)]
+        [a.name, a.legalName, a.rfc, a.city, a.state, a.brand, groupName(a.groupId), ...agencyTags(a)]
           .join(" ")
           .toLowerCase()
           .includes(query),
@@ -48,7 +54,7 @@ export default async function AgenciasPage({
           <Input
             name="q"
             defaultValue={q}
-            placeholder="Nombre, RFC, ciudad o grupo"
+            placeholder="Nombre, RFC, ciudad, grupo o etiqueta"
             className="pl-9"
             aria-label="Buscar agencia"
           />
@@ -92,7 +98,9 @@ export default async function AgenciasPage({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((agency) => (
+              {filtered.map((agency) => {
+                const tags = agencyTags(agency);
+                return (
                 <TableRow key={agency.id} className="relative">
                   <TableCell>
                     <Link href={`/agencias/${agency.id}`} className="font-medium hover:text-primary after:absolute after:inset-0">
@@ -107,12 +115,26 @@ export default async function AgenciasPage({
                   <TableCell className="text-muted-foreground">
                     {[agency.city, agency.state].filter(Boolean).join(", ") || "—"}
                   </TableCell>
-                  <TableCell>{agency.sources.length}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1.5">
+                      <span>{agency.sources.length}</span>
+                      {tags.length > 0 ? (
+                        <div className="relative z-10 flex flex-wrap gap-1">
+                          {tags.map((tag) => (
+                            <Badge key={tag} variant={tagVariant(tag)}>
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <StatusPill status={agency.status} />
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </div>

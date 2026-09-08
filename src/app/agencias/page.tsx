@@ -42,15 +42,20 @@ export default async function AgenciasPage({
         </Button>
       </div>
 
-      <form className="relative max-w-md">
-        <MagnifyingGlass className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          name="q"
-          defaultValue={q}
-          placeholder="Nombre, RFC, ciudad o grupo"
-          className="pl-9"
-          aria-label="Buscar agencia"
-        />
+      <form action="/agencias" method="get" className="flex max-w-md gap-2">
+        <div className="relative flex-1">
+          <MagnifyingGlass className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            name="q"
+            defaultValue={q}
+            placeholder="Nombre, RFC, ciudad o grupo"
+            className="pl-9"
+            aria-label="Buscar agencia"
+          />
+        </div>
+        <Button type="submit" variant="outline">
+          Buscar
+        </Button>
       </form>
 
       {filtered.length === 0 ? (

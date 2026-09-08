@@ -45,6 +45,7 @@ type NominatimHit = {
     municipality?: string;
     county?: string;
     city_district?: string;
+    borough?: string;
     suburb?: string;
     road?: string;
     house_number?: string;
@@ -83,7 +84,7 @@ function emptyResult(query: string): GeoResolveResult {
 function fromNominatim(hit: NominatimHit) {
   const addr = hit.address ?? {};
   const city = addr.city || addr.town || addr.village || "";
-  const municipality = addr.municipality || addr.city_district || addr.county || addr.suburb || "";
+  const municipality = addr.municipality || addr.city_district || addr.borough || addr.county || "";
   return {
     state: matchMexicanState(addr.state || "") || matchMexicanState(hit.display_name || ""),
     municipality,
@@ -96,35 +97,64 @@ function fromNominatim(hit: NominatimHit) {
 }
 
 function merge(base: ParsedMexicanAddress, extra: Partial<ParsedMexicanAddress>) {
+  const state = extra.state || base.state;
   return {
-    state: extra.state || base.state,
-    municipality: preferMunicipality(base.municipality, extra.municipality || ""),
+    state,
+    municipality: preferMunicipality(base.municipality, extra.municipality || "", state),
     city: extra.city || base.city,
-    postalCode: extra.postalCode || base.postalCode,
+    postalCode: base.postalCode || extra.postalCode,
   };
 }
 
+function cleanedAddressQuery(address: string, parsed: ParsedMexicanAddress) {
+  const street = (address.split(/[,/|]+/)[0] ?? address).replace(/\bcol(?:onia)?\.?\s+.*/i, "").trim();
+  return [street, parsed.city, parsed.municipality, parsed.state, parsed.postalCode, "México"]
+    .filter(Boolean)
+    .filter((part, i, all) => all.findIndex((x) => x.toLowerCase() === part.toLowerCase()) === i)
+    .join(", ");
+}
+
+const nominatimCache = new Map<string, NominatimHit[]>();
+let nominatimChain = Promise.resolve();
+
 async function nominatimSearch(query: string) {
-  try {
-    const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("addressdetails", "1");
-    url.searchParams.set("countrycodes", "mx");
-    url.searchParams.set("limit", "5");
-    url.searchParams.set("q", query);
-    const res = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "facturas-gael/pass (captura de agencias Nexcar)",
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return [] as NominatimHit[];
-    return (await res.json()) as NominatimHit[];
-  } catch {
-    return [] as NominatimHit[];
-  }
+  const key = query.trim().toLowerCase();
+  if (!key) return [] as NominatimHit[];
+  const cached = nominatimCache.get(key);
+  if (cached) return cached;
+
+  const run = nominatimChain.then(async () => {
+    const again = nominatimCache.get(key);
+    if (again) return again;
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("addressdetails", "1");
+      url.searchParams.set("countrycodes", "mx");
+      url.searchParams.set("limit", "5");
+      url.searchParams.set("q", query);
+      const res = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "facturas-gael/pass (captura de agencias Nexcar)",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) return [] as NominatimHit[];
+      const hits = (await res.json()) as NominatimHit[];
+      nominatimCache.set(key, hits);
+      await new Promise((r) => setTimeout(r, 1100));
+      return hits;
+    } catch {
+      return [] as NominatimHit[];
+    }
+  });
+  nominatimChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 function isNamedPlace(hit: NominatimHit) {
@@ -161,6 +191,18 @@ export async function resolveAgencyPlace(input: GeoResolveInput): Promise<GeoRes
   let addressHit: NominatimHit | null = null;
   let nameHit: NominatimHit | null = null;
 
+  if (address.length >= 8) {
+    try {
+      addressHit = (await nominatimSearch(`${address}, México`))[0] ?? null;
+      if (!addressHit) {
+        const cleaned = cleanedAddressQuery(address, parsed);
+        if (cleaned) addressHit = (await nominatimSearch(cleaned))[0] ?? null;
+      }
+    } catch {
+      addressHit = null;
+    }
+  }
+
   if (name.length >= 3) {
     try {
       const locale = [parsed.city, parsed.state, parsed.postalCode, "México"].filter(Boolean).join(", ");
@@ -168,15 +210,6 @@ export async function resolveAgencyPlace(input: GeoResolveInput): Promise<GeoRes
       nameHit = pickNameHit(hits, name);
     } catch {
       nameHit = null;
-    }
-  }
-
-  if (address.length >= 8) {
-    try {
-      const hits = await nominatimSearch(`${address}, México`);
-      addressHit = hits[0] ?? null;
-    } catch {
-      addressHit = null;
     }
   }
 
@@ -199,6 +232,11 @@ export async function resolveAgencyPlace(input: GeoResolveInput): Promise<GeoRes
       result.reviewMessage =
         "La dirección pegada no se localizó. La ubicación se tomó del nombre de la agencia. Revisa que coincida con la factura.";
     }
+  } else if (addressHit?.lat && addressHit?.lon) {
+    const extra = fromNominatim(addressHit);
+    result.mapsLat = extra.mapsLat;
+    result.mapsLng = extra.mapsLng;
+    result.foundBy = "address";
   } else if (searchQuery) {
     result.foundBy = "search";
   }
@@ -206,7 +244,7 @@ export async function resolveAgencyPlace(input: GeoResolveInput): Promise<GeoRes
   const mapsQuery = [name, address || composedLocation(result)].filter(Boolean).join(" ");
   result.mapsUrl = mapsQuery ? googleMapsSearchUrl(mapsQuery) : "";
   result.mapsEmbedUrl = mapsQuery
-    ? googleMapsEmbedUrl(mapsQuery, poiHit ? result.mapsLat : null, poiHit ? result.mapsLng : null)
+    ? googleMapsEmbedUrl(mapsQuery, result.mapsLat, result.mapsLng)
     : "";
   result.location = composedLocation(result);
 

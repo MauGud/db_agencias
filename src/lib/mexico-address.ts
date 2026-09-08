@@ -72,12 +72,17 @@ function findCdmxAlcaldia(value: string) {
   return hit;
 }
 
-function isStreetish(part: string) {
+export function isStreetish(part: string) {
   const t = part.replace(/^[.,/\s]+/, "").trim();
   if (t.length < 3) return true;
-  if (/\d/.test(t)) return true;
-  if (/^(av\.?|ave\.?|avenida|blvd\.?|boulevard|calle|andador|privada|col\.?|colonia)\b/i.test(t)) return true;
+  if (/^(av\.?|ave\.?|avenida|blvd\.?|boulevard|calle|andador|privada|calz\.?|calzada|carretera|camino|col\.?|colonia)\b/i.test(t)) {
+    return true;
+  }
   if (/^presidente\b/i.test(t)) return true;
+  if (/\d/.test(t)) return true;
+  if (/\b(no\.?|nte\.?|pte\.?|ote\.?|poniente|norte|sur|oriente)\b/i.test(t) && t.split(/\s+/).length <= 4) {
+    return true;
+  }
   return false;
 }
 
@@ -98,6 +103,15 @@ export function matchMexicanState(value: string) {
   return MEXICAN_STATES.find((s) => fold(s).toLowerCase() === lower) ?? "";
 }
 
+function normalizePlaceName(value: string) {
+  const v = value.replace(/\s+/g, " ").trim();
+  if (!v) return "";
+  if (v === v.toUpperCase()) {
+    return v.toLowerCase().replace(/(^|\s)\S/g, (s) => s.toUpperCase());
+  }
+  return v;
+}
+
 export function parseMexicanAddress(raw: string): ParsedMexicanAddress {
   let text = raw.replace(/\s+/g, " ").trim();
   const parsed: ParsedMexicanAddress = { state: "", municipality: "", city: "", postalCode: "" };
@@ -116,36 +130,43 @@ export function parseMexicanAddress(raw: string): ParsedMexicanAddress {
     }
   }
 
-  const alcaldia = findCdmxAlcaldia(text);
-  if (alcaldia) {
-    parsed.municipality = alcaldia;
-    if (!parsed.state) parsed.state = "Ciudad de México";
-    text = text.replace(new RegExp(alcaldia.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), " ");
+  const allowCdmxAlcaldia = !parsed.state || parsed.state === "Ciudad de México";
+  if (allowCdmxAlcaldia) {
+    const alcaldia = findCdmxAlcaldia(text);
+    if (alcaldia) {
+      parsed.municipality = alcaldia;
+      if (!parsed.state) parsed.state = "Ciudad de México";
+    }
   }
 
   const mun = text.match(/\b(?:alcald[ií]a|municipio|mun\.?|alc\.?)\s+(?:de\s+)?([^,]+)/i);
   if (mun && !parsed.municipality) {
-    parsed.municipality = mun[1].replace(/\bcol(?:onia)?\.?\b/gi, "").trim();
+    parsed.municipality = normalizePlaceName(mun[1].replace(/\bcol(?:onia)?\.?\b/gi, "").trim());
     text = text.replace(mun[0], " ");
   }
 
+  const coloniaMatch = text.match(/\bcol(?:onia)?\.?\s+([^,]+)/i);
+  const colonia = coloniaMatch ? coloniaMatch[1].replace(/\s+/g, " ").trim() : "";
+  if (coloniaMatch) text = text.replace(coloniaMatch[0], " ");
+
   const parts = text
     .split(/[,/|]+/)
-    .map((p) =>
-      p
-        .replace(/\bcol(?:onia)?\.?\s+\S+/gi, "")
-        .replace(/\bno\.?\s*\d+\w*/gi, "")
-        .replace(/\b(av\.?|ave\.?|avenida|blvd\.?|boulevard|calle|andador|privada)\b/gi, "")
-        .replace(/^[.,\s]+/, "")
-        .trim(),
-    )
-    .filter((p) => !isStreetish(p));
+    .map((p) => p.replace(/^[.,\s]+/, "").trim())
+    .filter((p) => p && !isStreetish(p));
 
   if (parsed.state === "Ciudad de México") {
-    parsed.city = parsed.city || "Ciudad de México";
+    parsed.city = "Ciudad de México";
   } else {
-    if (!parsed.city && parts.length) parsed.city = parts[parts.length - 1] ?? "";
-    if (!parsed.municipality && parts.length > 1) parsed.municipality = parts[parts.length - 2] ?? "";
+    if (!parsed.city && parts.length) parsed.city = normalizePlaceName(parts[parts.length - 1] ?? "");
+    if (!parsed.municipality && parts.length > 1) {
+      const candidate = parts[parts.length - 2] ?? "";
+      if (candidate && !isStreetish(candidate)) parsed.municipality = normalizePlaceName(candidate);
+    }
+    if (!parsed.city && colonia) {
+      const tokens = colonia.split(/\s+/).filter(Boolean);
+      if (tokens.length >= 3) parsed.city = normalizePlaceName(tokens[tokens.length - 1] ?? "");
+    }
+    if (!parsed.municipality && parsed.city) parsed.municipality = parsed.city;
   }
 
   return parsed;
@@ -192,13 +213,23 @@ export function namesLikelySame(entered: string, found: string) {
   return overlap / Math.max(at.size, bt.length) >= 0.4;
 }
 
-export function preferMunicipality(parsed: string, geo: string) {
+export function preferMunicipality(parsed: string, geo: string, state = "") {
+  if (parsed && isStreetish(parsed)) return geo || parsed;
+  if (geo && isStreetish(geo)) return parsed || geo;
+  if (state && state !== "Ciudad de México") return parsed || geo;
   return findCdmxAlcaldia(parsed) || findCdmxAlcaldia(geo) || parsed || geo;
 }
 
 export function composedLocation(parts: { municipality?: string; city?: string; state?: string }) {
+  const municipality = parts.municipality?.trim() ?? "";
+  const city = parts.city?.trim() ?? "";
+  const state = parts.state?.trim() ?? "";
+  const locMunicipality =
+    municipality && city && fold(city).toLowerCase().includes(fold(municipality).toLowerCase())
+      ? ""
+      : municipality;
   const unique: string[] = [];
-  for (const part of [parts.municipality, parts.city, parts.state]) {
+  for (const part of [locMunicipality, city, state]) {
     const v = part?.trim();
     if (v && !unique.some((u) => u.toLowerCase() === v.toLowerCase())) unique.push(v);
   }

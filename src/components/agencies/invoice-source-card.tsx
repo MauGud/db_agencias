@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   ArrowSquareOut,
   FilePdf,
+  FloppyDisk,
   Image as ImageIcon,
   LinkSimple,
   Plus,
@@ -144,11 +145,13 @@ function FlagCheck({
 export function InvoiceSourceCard({
   source,
   index,
+  saving,
   onChange,
   onRemove,
 }: {
   source: SourceDraft;
   index: number;
+  saving?: boolean;
   onChange: (next: SourceDraft) => void;
   onRemove: () => void;
 }) {
@@ -356,66 +359,6 @@ export function InvoiceSourceCard({
           </Field>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <FlagCheck
-            id={`amda-${index}`}
-            checked={source.amda}
-            label="Factura AMDA"
-            hint="Si se marca, aparecen las validaciones de AMDA y la etiqueta AMDA."
-            onCheckedChange={(checked) =>
-              patch({
-                amda: checked,
-                amdaFound: checked ? source.amdaFound : "",
-                amdaMatches: checked ? source.amdaMatches : "",
-              })
-            }
-          />
-          <FlagCheck
-            id={`blacklist-${index}`}
-            checked={source.blacklisted}
-            label="Lista negra"
-            hint="Marca la factura y genera la etiqueta Lista negra."
-            onCheckedChange={(checked) => patch({ blacklisted: checked })}
-          />
-          <FlagCheck
-            id={`fake-${index}`}
-            checked={source.isFake}
-            disabled={satLockedFake}
-            label="Falsa"
-            hint={
-              satLockedFake
-                ? "Se marcó sola porque la verificación SAT o la coincidencia en el SAT es No."
-                : "Se marca sola si la verificación SAT o la coincidencia en el SAT es No."
-            }
-            onCheckedChange={(checked) => {
-              if (!checked && satLockedFake) {
-                toast("No se puede quitar Falsa mientras la verificación SAT o la coincidencia sea No.");
-                return;
-              }
-              patch({ isFake: checked });
-            }}
-          />
-        </div>
-
-        {source.amda ? (
-          <div className="grid gap-6 rounded-md border border-border p-4 sm:grid-cols-2">
-            <Field id={`amdaFound-${index}`} label="Factura encontrada en AMDA">
-              <YesNoSelect
-                id={`amdaFound-${index}`}
-                value={source.amdaFound}
-                onChange={(amdaFound) => patch({ amdaFound })}
-              />
-            </Field>
-            <Field id={`amdaMatches-${index}`} label="¿El resultado del sitio coincide con los datos?">
-              <YesNoSelect
-                id={`amdaMatches-${index}`}
-                value={source.amdaMatches}
-                onChange={(amdaMatches) => patch({ amdaMatches })}
-              />
-            </Field>
-          </div>
-        ) : null}
-
         <div className="grid gap-6 sm:grid-cols-3">
           <Field id={`sig-${index}`} label="¿Tiene firma?">
             <YesNoSelect id={`sig-${index}`} value={source.hasSignature} onChange={(hasSignature) => patch({ hasSignature })} />
@@ -489,14 +432,80 @@ export function InvoiceSourceCard({
           </Field>
         </div>
 
-        <Field id={`dictamen-${index}`} label="Dictamen de la factura origen">
-          <Textarea
-            id={`dictamen-${index}`}
-            placeholder="Buena / Mala calidad / lo que observaste al leerla"
-            value={source.dictamen}
-            onChange={(e) => patch({ dictamen: e.target.value })}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <FlagCheck
+            id={`amda-${index}`}
+            checked={source.amda}
+            label="Factura AMDA"
+            hint="Si se marca, aparecen las validaciones de AMDA y la etiqueta AMDA."
+            onCheckedChange={(checked) =>
+              patch({
+                amda: checked,
+                amdaFound: checked ? source.amdaFound : "",
+                amdaMatches: checked ? source.amdaMatches : "",
+              })
+            }
           />
-        </Field>
+          <FlagCheck
+            id={`blacklist-${index}`}
+            checked={source.blacklisted}
+            label="Lista negra"
+            hint="Marca la factura y genera la etiqueta Lista negra."
+            onCheckedChange={(checked) => patch({ blacklisted: checked })}
+          />
+          <FlagCheck
+            id={`fake-${index}`}
+            checked={source.isFake}
+            disabled={satLockedFake}
+            label="Falsa"
+            hint={
+              satLockedFake
+                ? "Se marcó sola porque la verificación SAT o la coincidencia en el SAT es No."
+                : "Se marca sola si la verificación SAT o la coincidencia en el SAT es No."
+            }
+            onCheckedChange={(checked) => {
+              if (!checked && satLockedFake) {
+                toast("No se puede quitar Falsa mientras la verificación SAT o la coincidencia sea No.");
+                return;
+              }
+              patch({ isFake: checked });
+            }}
+          />
+        </div>
+
+        {source.amda ? (
+          <div className="grid gap-6 rounded-md border border-border p-4 sm:grid-cols-2">
+            <Field id={`amdaFound-${index}`} label="Factura encontrada en AMDA">
+              <YesNoSelect
+                id={`amdaFound-${index}`}
+                value={source.amdaFound}
+                onChange={(amdaFound) => patch({ amdaFound })}
+              />
+            </Field>
+            <Field id={`amdaMatches-${index}`} label="¿El resultado del sitio coincide con los datos?">
+              <YesNoSelect
+                id={`amdaMatches-${index}`}
+                value={source.amdaMatches}
+                onChange={(amdaMatches) => patch({ amdaMatches })}
+              />
+            </Field>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Field id={`dictamen-${index}`} label="Dictamen de la factura origen" className="flex-1">
+            <Textarea
+              id={`dictamen-${index}`}
+              placeholder="Buena / Mala calidad / lo que observaste al leerla"
+              value={source.dictamen}
+              onChange={(e) => patch({ dictamen: e.target.value })}
+            />
+          </Field>
+          <Button type="submit" disabled={saving} className="shrink-0">
+            <FloppyDisk weight="fill" />
+            {saving ? "Guardando…" : "Guardar ficha"}
+          </Button>
+        </div>
 
         {source.documentQuality === "Mala" || source.documentQuality === "Regular" ? (
           <div className="flex flex-col gap-3">

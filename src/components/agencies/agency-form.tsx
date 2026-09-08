@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Check, FloppyDisk } from "@phosphor-icons/react";
+import { Check } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AgencyGroupHistoryPanel } from "@/components/agencies/group-history-panel";
 import {
@@ -334,13 +334,7 @@ export function AgencyForm({
               Completa primero identidad y ubicación. La factura origen documenta de dónde salió la ficha.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <StatusPill status={status} />
-            <Button type="submit" disabled={saving}>
-              <FloppyDisk weight="fill" />
-              {saving ? "Guardando…" : "Guardar ficha"}
-            </Button>
-          </div>
+          <StatusPill status={status} />
         </div>
 
         <section className="flex flex-col gap-6">
@@ -556,20 +550,18 @@ export function AgencyForm({
         </section>
 
         <section className="flex flex-col gap-4">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold">Factura origen</h2>
-              <p className="text-sm text-muted-foreground">
-                El documento analizado que descubrió esta agencia. Una ficha puede tener varias.
-              </p>
-            </div>
-            <AddSourceButton onClick={() => patch({ sources: [...form.sources, blankSource()] })} />
+          <div>
+            <h2 className="text-lg font-semibold">Factura origen</h2>
+            <p className="text-sm text-muted-foreground">
+              El documento analizado que descubrió esta agencia. Una ficha puede tener varias.
+            </p>
           </div>
           {form.sources.map((source, index) => (
             <InvoiceSourceCard
               key={index}
               source={source}
               index={index}
+              saving={saving}
               onChange={(next) => {
                 const sources = [...form.sources];
                 sources[index] = next;
@@ -578,6 +570,7 @@ export function AgencyForm({
               onRemove={() => patch({ sources: form.sources.filter((_, i) => i !== index) })}
             />
           ))}
+          <AddSourceButton onClick={() => patch({ sources: [...form.sources, blankSource()] })} />
         </section>
       </div>
 

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { seedAgencies, seedGroups } from "@/lib/seed/agencies";
+import { isServerlessRuntime, passKeysMissingMessage } from "./config";
 import type { Agency, AutomotiveGroup, StoreSnapshot } from "./types";
 
 function withAgencyDefaults(agency: Agency): Agency {
@@ -32,16 +33,18 @@ async function readStore(): Promise<StoreSnapshot> {
 }
 
 async function persist(snapshot: StoreSnapshot, required = true) {
+  if (isServerlessRuntime()) {
+    if (!required) return;
+    throw new Error(passKeysMissingMessage());
+  }
   try {
     await mkdir(path.dirname(FILE), { recursive: true });
     await writeFile(FILE, JSON.stringify(snapshot, null, 2), "utf8");
   } catch (error) {
     if (!required) return;
     const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-    if (code === "EROFS" || code === "EPERM" || code === "EACCES") {
-      throw new Error(
-        "No pudimos escribir el store local. En Vercel el disco es de solo lectura: configura las keys de Pass para guardar fichas.",
-      );
+    if (code === "EROFS" || code === "EPERM" || code === "EACCES" || code === "ENOENT") {
+      throw new Error(passKeysMissingMessage());
     }
     throw error instanceof Error ? error : new Error("No pudimos guardar el store local.");
   }

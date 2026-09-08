@@ -24,34 +24,40 @@
 
 export type AgenciesPhase = "personal" | "nexcar" | "local";
 
-function read(name: string) {
-  return process.env[name]?.trim() || "";
+function trimEnv(value: string | undefined) {
+  return value?.trim().replace(/^["']|["']$/g, "") || "";
 }
 
+/**
+ * Next only inlines static `process.env.NAME` into serverless bundles.
+ * `process.env[name]` can look empty on Vercel even when the variable
+ * exists in the project settings — that made group creation fall back
+ * to writing `data/store.json` under `/var/task`.
+ */
 export const passConfig = {
   /** "personal" = padre (fase 1). "nexcar" = prod Nexcar (fase 2). */
-  agenciesPhase: (read("AGENCIES_DATABASE_PHASE") || "personal") as Exclude<
+  agenciesPhase: (trimEnv(process.env.AGENCIES_DATABASE_PHASE) || "personal") as Exclude<
     AgenciesPhase,
     "local"
   >,
 
   agencies: {
     url:
-      read("NEXT_PUBLIC_AGENCIES_SUPABASE_URL") ||
-      read("AGENCIES_SUPABASE_URL") ||
-      read("SUPABASE_URL"),
+      trimEnv(process.env.NEXT_PUBLIC_AGENCIES_SUPABASE_URL) ||
+      trimEnv(process.env.AGENCIES_SUPABASE_URL) ||
+      trimEnv(process.env.SUPABASE_URL),
     serviceRoleKey:
-      read("AGENCIES_SUPABASE_SERVICE_ROLE_KEY") ||
-      read("SUPABASE_SERVICE_ROLE_KEY") ||
-      read("SUPABASE_SECRET_KEY") ||
-      read("SUPABASE_KEY"),
+      trimEnv(process.env.AGENCIES_SUPABASE_SERVICE_ROLE_KEY) ||
+      trimEnv(process.env.SUPABASE_SERVICE_ROLE_KEY) ||
+      trimEnv(process.env.SUPABASE_SECRET_KEY) ||
+      trimEnv(process.env.SUPABASE_KEY),
     anonKey:
-      read("NEXT_PUBLIC_AGENCIES_SUPABASE_ANON_KEY") ||
-      read("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
-    groupsTable: read("AGENCIES_GROUPS_TABLE") || "automotive_groups",
-    agenciesTable: read("AGENCIES_TABLE") || "agencies",
-    sourceInvoicesTable: read("AGENCY_SOURCE_INVOICES_TABLE") || "agency_source_invoices",
-    groupHistoryTable: read("AGENCY_GROUP_HISTORY_TABLE") || "agency_group_history",
+      trimEnv(process.env.NEXT_PUBLIC_AGENCIES_SUPABASE_ANON_KEY) ||
+      trimEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+    groupsTable: trimEnv(process.env.AGENCIES_GROUPS_TABLE) || "automotive_groups",
+    agenciesTable: trimEnv(process.env.AGENCIES_TABLE) || "agencies",
+    sourceInvoicesTable: trimEnv(process.env.AGENCY_SOURCE_INVOICES_TABLE) || "agency_source_invoices",
+    groupHistoryTable: trimEnv(process.env.AGENCY_GROUP_HISTORY_TABLE) || "agency_group_history",
   },
 
   /**
@@ -61,21 +67,32 @@ export const passConfig = {
    */
   invoices: {
     url:
-      read("NEXT_PUBLIC_INVOICES_SUPABASE_URL") ||
-      read("INVOICES_SUPABASE_URL") ||
+      trimEnv(process.env.NEXT_PUBLIC_INVOICES_SUPABASE_URL) ||
+      trimEnv(process.env.INVOICES_SUPABASE_URL) ||
       "https://iorqdgnczgxnxbxjuibu.supabase.co",
-    serviceRoleKey: read("INVOICES_SUPABASE_SERVICE_ROLE_KEY"),
-    anonKey: read("NEXT_PUBLIC_INVOICES_SUPABASE_ANON_KEY"),
-    table: read("INVOICES_TABLE") || "documents",
-    typeColumn: read("INVOICE_TYPE_COLUMN") || "type",
-    typeValue: read("INVOICE_TYPE_VALUE") || "invoice",
-    idColumn: read("INVOICE_ID_COLUMN") || "id",
-    urlColumn: read("INVOICE_URL_COLUMN") || "file_url",
-    vehicleIdColumn: read("INVOICE_VEHICLE_ID_COLUMN") || "vehicle_id",
-    storageBucket: read("INVOICES_STORAGE_BUCKET") || "vehicles",
-    storageEnv: read("INVOICES_STORAGE_ENV") || "prod",
+    serviceRoleKey: trimEnv(process.env.INVOICES_SUPABASE_SERVICE_ROLE_KEY),
+    anonKey: trimEnv(process.env.NEXT_PUBLIC_INVOICES_SUPABASE_ANON_KEY),
+    table: trimEnv(process.env.INVOICES_TABLE) || "documents",
+    typeColumn: trimEnv(process.env.INVOICE_TYPE_COLUMN) || "type",
+    typeValue: trimEnv(process.env.INVOICE_TYPE_VALUE) || "invoice",
+    idColumn: trimEnv(process.env.INVOICE_ID_COLUMN) || "id",
+    urlColumn: trimEnv(process.env.INVOICE_URL_COLUMN) || "file_url",
+    vehicleIdColumn: trimEnv(process.env.INVOICE_VEHICLE_ID_COLUMN) || "vehicle_id",
+    storageBucket: trimEnv(process.env.INVOICES_STORAGE_BUCKET) || "vehicles",
+    storageEnv: trimEnv(process.env.INVOICES_STORAGE_ENV) || "prod",
   },
 } as const;
+
+export function isServerlessRuntime() {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+}
+
+export function passKeysMissingMessage() {
+  if (isServerlessRuntime()) {
+    return "Pass no está configurado en este despliegue. En Vercel → Settings → Environment Variables agrega NEXT_PUBLIC_AGENCIES_SUPABASE_URL y AGENCIES_SUPABASE_SERVICE_ROLE_KEY (Production) y vuelve a desplegar.";
+  }
+  return "Faltan las keys de Pass. Copia .env.example a .env.local y llena URL + service_role.";
+}
 
 export function agenciesBackend(): AgenciesPhase {
   if (passConfig.agencies.url && (passConfig.agencies.serviceRoleKey || passConfig.agencies.anonKey)) {

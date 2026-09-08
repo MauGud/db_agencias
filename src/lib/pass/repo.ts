@@ -1,7 +1,7 @@
 import { composedLocation } from "@/lib/mexico-address";
 import { revalidatePath } from "next/cache";
 import { connection } from "next/server";
-import { agenciesBackend, passConfig } from "./config";
+import { agenciesBackend, isServerlessRuntime, passConfig, passKeysMissingMessage } from "./config";
 import { deriveStatus } from "./completeness";
 import { localDeleteAgency, localList, localSaveAgency, localSaveGroup } from "./local-store";
 import { getAgenciesClient } from "./supabase";
@@ -11,6 +11,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function requireWritableStore() {
+  if (agenciesBackend() === "local" && isServerlessRuntime()) {
+    throw new Error(passKeysMissingMessage());
+  }
 }
 
 function text(value: unknown) {
@@ -290,6 +296,7 @@ export async function saveGroup(input: { id?: string; name: string; brands?: str
   };
 
   if (agenciesBackend() === "local") {
+    requireWritableStore();
     const saved = await localSaveGroup(group);
     bustCatalogCache();
     return saved;
@@ -297,6 +304,7 @@ export async function saveGroup(input: { id?: string; name: string; brands?: str
 
   const client = getAgenciesClient();
   if (!client) {
+    requireWritableStore();
     const saved = await localSaveGroup(group);
     bustCatalogCache();
     return saved;
@@ -322,6 +330,7 @@ export async function saveAgency(input: AgencyInput) {
   }
 
   if (agenciesBackend() === "local") {
+    requireWritableStore();
     const saved = await localSaveAgency(agency);
     bustCatalogCache(agency.id);
     return saved;
@@ -329,6 +338,7 @@ export async function saveAgency(input: AgencyInput) {
 
   const client = getAgenciesClient();
   if (!client) {
+    requireWritableStore();
     const saved = await localSaveAgency(agency);
     bustCatalogCache(agency.id);
     return saved;
@@ -429,12 +439,14 @@ export async function saveAgency(input: AgencyInput) {
 
 export async function deleteAgency(id: string) {
   if (agenciesBackend() === "local") {
+    requireWritableStore();
     await localDeleteAgency(id);
     bustCatalogCache(id);
     return;
   }
   const client = getAgenciesClient();
   if (!client) {
+    requireWritableStore();
     await localDeleteAgency(id);
     bustCatalogCache(id);
     return;

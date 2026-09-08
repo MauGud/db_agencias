@@ -105,21 +105,26 @@ function merge(base: ParsedMexicanAddress, extra: Partial<ParsedMexicanAddress>)
 }
 
 async function nominatimSearch(query: string) {
-  const url = new URL("https://nominatim.openstreetmap.org/search");
-  url.searchParams.set("format", "jsonv2");
-  url.searchParams.set("addressdetails", "1");
-  url.searchParams.set("countrycodes", "mx");
-  url.searchParams.set("limit", "5");
-  url.searchParams.set("q", query);
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "facturas-gael/pass (captura de agencias Nexcar)",
-    },
-    cache: "no-store",
-  });
-  if (!res.ok) return [] as NominatimHit[];
-  return (await res.json()) as NominatimHit[];
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("countrycodes", "mx");
+    url.searchParams.set("limit", "5");
+    url.searchParams.set("q", query);
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "facturas-gael/pass (captura de agencias Nexcar)",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [] as NominatimHit[];
+    return (await res.json()) as NominatimHit[];
+  } catch {
+    return [] as NominatimHit[];
+  }
 }
 
 function isNamedPlace(hit: NominatimHit) {

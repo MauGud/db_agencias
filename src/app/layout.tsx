@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { AppShell } from "@/components/layout/app-shell";
 import { Providers } from "@/components/layout/providers";
 import { agenciesBackend, phaseLabel } from "@/lib/pass/config";
+import { getPassDiagnostics } from "@/lib/pass/diagnostics";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -23,7 +24,8 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const diagnostics = await getPassDiagnostics();
   return (
     <html
       lang="es"
@@ -32,7 +34,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="min-h-full font-sans">
         <Providers>
-          <AppShell phaseLabel={phaseLabel(agenciesBackend())}>{children}</AppShell>
+          <AppShell phaseLabel={phaseLabel(agenciesBackend())} notice={diagnostics.notice}>
+            {children}
+          </AppShell>
         </Providers>
       </body>
     </html>

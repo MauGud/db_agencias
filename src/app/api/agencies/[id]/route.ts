@@ -3,6 +3,7 @@ import { deleteAgency, getAgency, saveAgency } from "@/lib/pass/repo";
 import type { AgencyInput } from "@/lib/pass/types";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -19,7 +20,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ agency });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No pudimos guardar la ficha.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status = /Pass no está configurado|store local|solo lectura|\/var\/task/i.test(message)
+      ? 503
+      : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }
 

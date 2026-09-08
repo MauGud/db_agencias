@@ -7,7 +7,7 @@ import { useTheme } from "next-themes";
 import { Logo } from "@/components/composed/logo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 const NAV = [
   { href: "/agencias", label: "Agencias", icon: Buildings },
@@ -17,12 +17,16 @@ const NAV = [
 export function AppShell({
   children,
   phaseLabel,
+  notice,
 }: {
   children: ReactNode;
   phaseLabel: string;
+  notice?: string | null;
 }) {
   const pathname = usePathname();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   return (
     <div className="flex min-h-full bg-background">
@@ -65,13 +69,18 @@ export function AppShell({
             variant="ghost"
             size="icon"
             aria-label="Cambiar tema"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            onClick={() => setTheme((mounted ? resolvedTheme : "light") === "dark" ? "light" : "dark")}
           >
             <Sun weight="fill" className="size-4 dark:hidden" />
             <Moon weight="fill" className="hidden size-4 dark:block" />
           </Button>
         </header>
-        <main className="flex-1 px-6 py-8 lg:px-10">{children}</main>
+        <main className="flex-1 px-6 py-8 lg:px-10">
+          {notice ? (
+            <p className="mb-6 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">{notice}</p>
+          ) : null}
+          {children}
+        </main>
       </div>
     </div>
   );

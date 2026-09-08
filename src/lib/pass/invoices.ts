@@ -47,6 +47,8 @@ export async function searchInvoices(query: string): Promise<InvoiceRecord[]> {
   const typeCol = passConfig.invoices.typeColumn;
   const typeVal = passConfig.invoices.typeValue;
   const parsed = parseInvoiceStorageUrl(q);
+  const needle = (parsed?.fileId || q).replace(/[,()]/g, " ").trim();
+  if (!needle) return [];
 
   let request = client.from(table).select("*").eq(typeCol, typeVal).limit(12);
 
@@ -56,7 +58,7 @@ export async function searchInvoices(query: string): Promise<InvoiceRecord[]> {
     );
   } else {
     request = request.or(
-      `${passConfig.invoices.idColumn}.eq.${q},${passConfig.invoices.vehicleIdColumn}.eq.${q},${passConfig.invoices.urlColumn}.ilike.%${q}%`,
+      `${passConfig.invoices.idColumn}.eq.${needle},${passConfig.invoices.vehicleIdColumn}.eq.${needle},${passConfig.invoices.urlColumn}.ilike.%${needle}%`,
     );
   }
 

@@ -34,7 +34,8 @@ function trimEnv(value: string | undefined) {
  * exists in the project settings — that made group creation fall back
  * to writing `data/store.json` under `/var/task`.
  */
-export const passConfig = {
+function loadPassConfig() {
+  return {
   /** "personal" = padre (fase 1). "nexcar" = prod Nexcar (fase 2). */
   agenciesPhase: (trimEnv(process.env.AGENCIES_DATABASE_PHASE) || "personal") as Exclude<
     AgenciesPhase,
@@ -81,7 +82,25 @@ export const passConfig = {
     storageBucket: trimEnv(process.env.INVOICES_STORAGE_BUCKET) || "vehicles",
     storageEnv: trimEnv(process.env.INVOICES_STORAGE_ENV) || "prod",
   },
-} as const;
+  };
+}
+
+export function getPassConfig() {
+  return loadPassConfig();
+}
+
+/** Reads env on every access so Vercel serverless sees runtime keys, not build-time empties. */
+export const passConfig = {
+  get agenciesPhase() {
+    return loadPassConfig().agenciesPhase;
+  },
+  get agencies() {
+    return loadPassConfig().agencies;
+  },
+  get invoices() {
+    return loadPassConfig().invoices;
+  },
+};
 
 export function isServerlessRuntime() {
   return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);

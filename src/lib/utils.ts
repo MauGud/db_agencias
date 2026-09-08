@@ -37,6 +37,15 @@ export function maskRfc(rfc: string | null | undefined) {
   return `${clean.slice(0, 4)}••••••${clean.slice(-3)}`;
 }
 
+export async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(text.replace(/\s+/g, " ").slice(0, 180) || `HTTP ${res.status}`);
+  }
+}
+
 export function isBlankish(value: string | null | undefined) {
   if (!value) return true;
   const v = value.trim().toLowerCase();

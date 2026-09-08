@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listGroups, saveGroup } from "@/lib/pass/repo";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET() {
   try {
@@ -23,6 +24,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ group });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No pudimos crear el grupo.";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status = /Pass no está configurado|store local|solo lectura|\/var\/task/i.test(message)
+      ? 503
+      : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

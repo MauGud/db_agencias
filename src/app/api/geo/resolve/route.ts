@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveAgencyPlace } from "@/lib/pass/places";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {

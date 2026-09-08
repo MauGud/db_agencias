@@ -14,7 +14,7 @@ function nowIso() {
 }
 
 function requireWritableStore() {
-  if (agenciesBackend() === "local" && isServerlessRuntime()) {
+  if (isServerlessRuntime()) {
     throw new Error(passKeysMissingMessage());
   }
 }
@@ -286,17 +286,30 @@ export async function getAgency(id: string) {
 }
 
 export async function saveGroup(input: { id?: string; name: string; brands?: string[]; notes?: string }) {
-  const group: AutomotiveGroup = {
-    id: input.id ?? crypto.randomUUID(),
-    name: input.name.trim(),
-    brands: input.brands ?? [],
-    notes: input.notes ?? "",
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  };
+  const name = input.name.trim();
+  const extraBrands = (input.brands ?? []).map((b) => b.trim()).filter(Boolean);
 
   if (agenciesBackend() === "local") {
     requireWritableStore();
+    const { groups } = await localList();
+    const existing = !input.id
+      ? groups.find((g) => g.name.toLowerCase() === name.toLowerCase())
+      : groups.find((g) => g.id === input.id);
+    const group: AutomotiveGroup = existing
+      ? {
+          ...existing,
+          brands: Array.from(new Set([...existing.brands, ...extraBrands])),
+          notes: input.notes ?? existing.notes,
+          updatedAt: nowIso(),
+        }
+      : {
+          id: input.id ?? crypto.randomUUID(),
+          name,
+          brands: extraBrands,
+          notes: input.notes ?? "",
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        };
     const saved = await localSaveGroup(group);
     bustCatalogCache();
     return saved;
@@ -305,11 +318,50 @@ export async function saveGroup(input: { id?: string; name: string; brands?: str
   const client = getAgenciesClient();
   if (!client) {
     requireWritableStore();
-    const saved = await localSaveGroup(group);
+    const saved = await localSaveGroup({
+      id: input.id ?? crypto.randomUUID(),
+      name,
+      brands: extraBrands,
+      notes: input.notes ?? "",
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
     bustCatalogCache();
     return saved;
   }
-  const { error } = await client.from(passConfig.agencies.groupsTable).upsert({
+
+  const { groupsTable } = passConfig.agencies;
+  if (!input.id) {
+    const { data: rows } = await client.from(groupsTable).select("*").ilike("name", name).limit(8);
+    const match = (rows ?? []).find(
+      (r) => String((r as { name?: string }).name ?? "").toLowerCase() === name.toLowerCase(),
+    );
+    if (match) {
+      const group = rowToGroup(match as Record<string, unknown>);
+      const brands = Array.from(new Set([...group.brands, ...extraBrands]));
+      if (brands.length !== group.brands.length) {
+        const { error } = await client
+          .from(groupsTable)
+          .update({ brands, updated_at: nowIso() })
+          .eq("id", group.id);
+        if (error) throw new Error(error.message);
+        group.brands = brands;
+        group.updatedAt = nowIso();
+      }
+      bustCatalogCache();
+      return group;
+    }
+  }
+
+  const group: AutomotiveGroup = {
+    id: input.id ?? crypto.randomUUID(),
+    name,
+    brands: extraBrands,
+    notes: input.notes ?? "",
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  const { error } = await client.from(groupsTable).upsert({
     id: group.id,
     name: group.name,
     brands: group.brands,

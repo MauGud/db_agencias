@@ -23,7 +23,7 @@ import { completenessItems, completenessScore, deriveStatus } from "@/lib/pass/c
 import type { Agency, AgencyGroupHistory, AutomotiveGroup } from "@/lib/pass/types";
 import type { GeoResolveResult } from "@/lib/pass/places";
 import { MEXICAN_STATES, rfcError } from "@/lib/mexico";
-import { cn } from "@/lib/utils";
+import { cn, readJson } from "@/lib/utils";
 
 type FormState = {
   name: string;
@@ -189,7 +189,7 @@ export function AgencyForm({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, address }),
         });
-        const data = (await res.json()) as GeoResolveResult & { error?: string };
+        const data = await readJson<GeoResolveResult & { error?: string }>(res);
         if (!res.ok || data.error) return;
         lastResolvedAddress.current = address;
         setForm((f) => ({
@@ -224,27 +224,39 @@ export function AgencyForm({
   async function createGroup(nameOverride?: string, assignCurrent = true, brands?: string[]) {
     const name = (nameOverride ?? newGroup).trim();
     if (!name) return null;
-    const res = await fetch("/api/groups", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({
-        name,
-        brands: brands ?? (form.brand ? [form.brand] : []),
-      }),
-    });
-    const data = (await res.json()) as { group?: AutomotiveGroup; error?: string };
-    if (!res.ok || !data.group) {
-      toast(data.error ?? "No pudimos crear el grupo. Intenta de nuevo.");
+    try {
+      const res = await fetch("/api/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          name,
+          brands: brands ?? (form.brand ? [form.brand] : []),
+        }),
+      });
+      const data = await readJson<{ group?: AutomotiveGroup; error?: string }>(res);
+      if (!res.ok || !data.group) {
+        toast(data.error ?? "No pudimos crear el grupo. Intenta de nuevo.");
+        return null;
+      }
+      setGroups((g) => {
+        if (g.some((x) => x.id === data.group!.id)) {
+          return g
+            .map((x) => (x.id === data.group!.id ? data.group! : x))
+            .sort((a, b) => a.name.localeCompare(b.name, "es"));
+        }
+        return [...g, data.group!].sort((a, b) => a.name.localeCompare(b.name, "es"));
+      });
+      if (assignCurrent) {
+        patch({ groupId: data.group.id });
+        setNewGroup("");
+      }
+      toast(`Grupo ${data.group.name} listo.`);
+      return data.group;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "No pudimos crear el grupo. Intenta de nuevo.");
       return null;
     }
-    setGroups((g) => [...g, data.group!].sort((a, b) => a.name.localeCompare(b.name, "es")));
-    if (assignCurrent) {
-      patch({ groupId: data.group.id });
-      setNewGroup("");
-    }
-    toast(`Grupo ${data.group.name} creado.`);
-    return data.group;
   }
 
   async function submit() {
@@ -279,7 +291,7 @@ export function AgencyForm({
           }),
         }),
       });
-      const data = (await res.json()) as { agency?: Agency; error?: string };
+      const data = await readJson<{ agency?: Agency; error?: string }>(res);
       if (!res.ok || !data.agency) {
         toast(data.error ?? "No pudimos guardar la ficha. Intenta de nuevo.");
         return;
@@ -291,8 +303,8 @@ export function AgencyForm({
         router.push(`/agencias/${data.agency.id}`);
         router.refresh();
       }
-    } catch {
-      toast("Algo falló de nuestro lado. Intenta de nuevo.");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Algo falló de nuestro lado. Intenta de nuevo.");
     } finally {
       setSaving(false);
     }
@@ -353,12 +365,11 @@ export function AgencyForm({
               className="sm:col-span-2"
               hint="Obligatorio. Si escribes un nombre nuevo y guardas, se crea el grupo al vuelo."
             >
-              <Select value={form.groupId || "none"} onValueChange={(v) => patch({ groupId: v === "none" ? "" : v })}>
+              <Select value={form.groupId || undefined} onValueChange={(v) => patch({ groupId: v })}>
                 <SelectTrigger id="group">
                   <SelectValue placeholder="Elige un grupo" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Sin grupo</SelectItem>
                   {groups.map((g) => (
                     <SelectItem key={g.id} value={g.id}>
                       {g.name}
